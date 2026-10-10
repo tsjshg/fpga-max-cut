@@ -16,14 +16,15 @@
 module mc_lane #(
   parameter P  = 16,
   parameter JW = 4,          // log2(P)
-  parameter D  = 4
+  parameter D  = 4,
+  parameter TW = 32          // 試行番号の幅。1 ジョブの窓の数 WT は 2^TW − 1 未満にする（全 1 を「無し」に使う）
 ) (
   input  wire          clk,
 
   // ---- S0 の入力（窓の制御から） ----
   input  wire          s0_valid,
   input  wire [JW-1:0] s0_j,
-  input  wire [47:0]   s0_t,
+  input  wire [TW-1:0] s0_t,
   input  wire          s0_buf,      // この窓の OWN の番号
   input  wire [D-1:0]  s0_nb,       // 隣の色（このレーンのレプリカ j のぶん）
   input  wire          s0_own,      // 自分の色
@@ -42,18 +43,24 @@ module mc_lane #(
   input  wire [JW-1:0] ld_j_i,
   input  wire [63:0]   ld_data_i,
 
-  // ---- 結果の読み出し（非同期） ----
+  // ---- 結果の読み出し。rd_en の間は書き番地を rd_j にして書き口から読み、レーンの中で1段受ける
+  //      （読み出し専用の口を別に持つと LUTRAM がもう1組要る。受けずに 48 レーンの選択までつなぐと、
+  //       走りの番地 j_4 からの経路と見なされて K = 48 で WNS −2.6 ns になった）。rd_j の 1 クロック後に出る ----
+  input  wire          rd_en_i,
   input  wire [JW-1:0] rd_j,
-  output wire [15:0]   rd_best,
-  output wire [15:0]   rd_c,
-  output wire [47:0]   rd_best_t,
-  output wire [47:0]   rd_hit_t
+  output reg  [15:0]   rd_best,
+  output reg  [15:0]   rd_c,
+  output reg  [TW-1:0] rd_best_t,
+  output reg  [TW-1:0] rd_hit_t,
+  output reg           rd_bt_none,  // 改善が無い（best_t が全 1）
+  output reg           rd_ht_none   // 届いていない（hit_t が全 1）
 );
 
   // 読み込みの信号は全レーンに配られる大きな扇形なので、レーンごとに1段受ける
   // （K = 48 で、これが LUTRAM の書き番地の選択まで届いてタイミングを落としていた）。
   // 読み込みは窓 -1 より前に終わるので、1クロック遅れても走りには影響しない。
   reg          ld_seed_we, ld_c0_we;
+  reg          rd_en;       // 結果を読み出す間 1（全レーンに配る信号なので1段受ける。出力の見出し3語の間に立つ）
   reg [JW-1:0] ld_j;
   reg [63:0]   ld_data;
   always @(posedge clk) begin
@@ -61,20 +68,17 @@ module mc_lane #(
     ld_c0_we   <= ld_c0_we_i;
     ld_j       <= ld_j_i;
     ld_data    <= ld_data_i;
+    rd_en      <= rd_en_i;
   end
 
   // ---------------- レプリカごとの記憶 ----------------
   (* ram_style = "distributed" *) reg [63:0] xs_mem    [0:P-1];
   (* ram_style = "distributed" *) reg [15:0] c_mem     [0:P-1];
   (* ram_style = "distributed" *) reg [15:0] best_mem  [0:P-1];
-  (* ram_style = "distributed" *) reg [47:0] bestt_mem [0:P-1];
-  (* ram_style = "distributed" *) reg [47:0] hitt_mem  [0:P-1];
+  (* ram_style = "distributed" *) reg [TW-1:0] bestt_mem [0:P-1];
+  (* ram_style = "distributed" *) reg [TW-1:0] hitt_mem  [0:P-1];
   (* ram_style = "distributed" *) reg        hitv_mem  [0:P-1];
 
-  assign rd_best   = best_mem[rd_j];
-  assign rd_c      = c_mem[rd_j];
-  assign rd_best_t = bestt_mem[rd_j];
-  assign rd_hit_t  = hitt_mem[rd_j];
 
   // ---------------- S0 ----------------
   wire [63:0] x0  = xs_mem[s0_j];
@@ -89,7 +93,7 @@ module mc_lane #(
 
   reg          v_1;
   reg [JW-1:0] j_1;
-  reg [47:0]   t_1;
+  reg [TW-1:0] t_1;
   reg          buf_1, own_1;
   reg [D-1:0]  nb_1;
   reg [31:0]   r_1, th0_1, th1_1;
@@ -116,7 +120,7 @@ module mc_lane #(
 
   reg          v_2;
   reg [JW-1:0] j_2;
-  reg [47:0]   t_2;
+  reg [TW-1:0] t_2;
   reg          buf_2, own_2;
   reg [2:0]    ns_2;
   reg          lt0_2, lt1_2;
@@ -139,7 +143,7 @@ module mc_lane #(
 
   reg          v_3;
   reg [JW-1:0] j_3;
-  reg [47:0]   t_3;
+  reg [TW-1:0] t_3;
   reg          buf_3, own_3, acc_3;
   reg [15:0]   cn_3;
   always @(posedge clk) begin
@@ -153,10 +157,11 @@ module mc_lane #(
   end
 
   // ---------------- S3 ----------------
-  always @(posedge clk) begin
-    if (ld_c0_we) c_mem[ld_j] <= ld_data[15:0];
-    else if (v_3) c_mem[j_3] <= cn_3;
-  end
+  // C の書き口（番地 a3）。読み込み・結果の読み出しのときは番地を差し替える
+  wire [JW-1:0] a3 = ld_c0_we ? ld_j : (rd_en ? rd_j : j_3);
+  always @(posedge clk)
+    if (ld_c0_we | v_3) c_mem[a3] <= ld_c0_we ? ld_data[15:0] : cn_3;
+
   always @(*) s3_flip = v_3 & acc_3;
   assign s3_buf_o = buf_3;
   assign s3_j_o   = j_3;
@@ -166,7 +171,7 @@ module mc_lane #(
 
   reg          v_4, imp_4, hit_4;
   reg [JW-1:0] j_4;
-  reg [47:0]   t_4;
+  reg [TW-1:0] t_4;
   reg [15:0]   cn_4;
   always @(posedge clk) begin
     v_4   <= v_3;
@@ -178,22 +183,32 @@ module mc_lane #(
   end
 
   // ---------------- S4 ----------------
+  // 書き口（番地 a4）。結果の読み出しもここから
+  wire [JW-1:0] a4 = ld_c0_we ? ld_j : (rd_en ? rd_j : j_4);
   always @(posedge clk) begin
     if (ld_c0_we) begin
-      best_mem[ld_j]  <= ld_data[15:0];
-      bestt_mem[ld_j] <= {48{1'b1}};
-      hitt_mem[ld_j]  <= {48{1'b1}};
-      hitv_mem[ld_j]  <= 1'b0;
+      best_mem[a4]  <= ld_data[15:0];
+      bestt_mem[a4] <= {TW{1'b1}};
+      hitt_mem[a4]  <= {TW{1'b1}};
+      hitv_mem[a4]  <= 1'b0;
     end else if (v_4) begin
       if (imp_4) begin
-        best_mem[j_4]  <= cn_4;
-        bestt_mem[j_4] <= t_4;
+        best_mem[a4]  <= cn_4;
+        bestt_mem[a4] <= t_4;
       end
       if (hit_4) begin
-        hitt_mem[j_4] <= t_4;
-        hitv_mem[j_4] <= 1'b1;
+        hitt_mem[a4] <= t_4;
+        hitv_mem[a4] <= 1'b1;
       end
     end
+  end
+  always @(posedge clk) begin
+    rd_c       <= c_mem[a3];
+    rd_best    <= best_mem[a4];
+    rd_best_t  <= bestt_mem[a4];
+    rd_hit_t   <= hitt_mem[a4];
+    rd_bt_none <= &bestt_mem[a4];
+    rd_ht_none <= &hitt_mem[a4];
   end
 
 endmodule

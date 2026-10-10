@@ -144,7 +144,7 @@ module mc_core #(
   reg [JW-1:0] o;                 // 窓の中の時刻 = 今 S0 に入るスロット（全レーンの選択に配る）
   reg [NW-1:0] vprev, vcur, vnext;
   reg          cur_valid, prev_valid;
-  reg [47:0]   t_cur;
+  reg [31:0]   t_cur;              // 窓の番号。1 ジョブの窓の数は 2^32 − 1 未満（host 側で確かめる）
   reg          curbuf;
   reg [W-1:0]  own0, own1;
   reg [W-1:0]  nb   [0:D-1];
@@ -167,8 +167,9 @@ module mc_core #(
   wire [JW-1:0] s3_j [0:K-1];
   wire [15:0]   rd_best [0:K-1];
   wire [15:0]   rd_c    [0:K-1];
-  wire [47:0]   rd_bt   [0:K-1];
-  wire [47:0]   rd_ht   [0:K-1];
+  wire [31:0]   rd_bt   [0:K-1];
+  wire [31:0]   rd_ht   [0:K-1];
+  wire [K-1:0]  rd_btn, rd_htn;
   reg  [JW-1:0] rd_j;
   reg  [KW-1:0] rd_k;
 
@@ -198,8 +199,9 @@ module mc_core #(
         .ld_seed_we_i(beat && lsec == L_SEED && kmatch),
         .ld_c0_we_i(beat && lsec == L_C0 && kmatch),
         .ld_j_i(ld_j), .ld_data_i(din),
-        .rd_j(rd_j), .rd_best(rd_best[gk]), .rd_c(rd_c[gk]),
-        .rd_best_t(rd_bt[gk]), .rd_hit_t(rd_ht[gk]));
+        .rd_en_i(state == ST_OUT), .rd_j(rd_j), .rd_best(rd_best[gk]), .rd_c(rd_c[gk]),
+        .rd_best_t(rd_bt[gk]), .rd_hit_t(rd_ht[gk]),
+        .rd_bt_none(rd_btn[gk]), .rd_ht_none(rd_htn[gk]));
     end
   endgenerate
 
@@ -210,6 +212,8 @@ module mc_core #(
   reg [1:0]  gsub;
   reg [CBW-1:0] gcs;               // 塗り分けの語の中のビート番号
   reg        g1_v, g1_col, g1_last;  reg [63:0] g1_d;  reg [CBW-1:0] g1_cs;
+  reg        g1_rep;  reg [1:0] g1_sub;
+  reg        g2_rep;  reg [1:0] g2_sub;  reg [KW-1:0] rd_k2;
   reg        g2_v, g2_col, g2_last;  reg [63:0] g2_d;  reg [CBW-1:0] g2_cs;
   reg        g3_v, g3_col, g3_last;  reg [63:0] g3_d;  reg [CBW-1:0] g3_cs;
   wire [WC-1:0] col_rd2p = col_rd2;
@@ -224,8 +228,10 @@ module mc_core #(
   wire g_can  = (state == ST_OUT) && (gsec != G_DONE) && (f_cnt + g1_v + g2_v + g3_v < FD - 1);
   assign m_axis_tkeep = 8'hFF;
 
-  // 生成段で出す語（レプリカの語は LUTRAM を非同期に読む。塗り分けは BRAM で、
-  // 生成段で番地を載せると3段後の g3 と同じ時刻に col_rd2 に出る）
+  // 生成段で出す語。見出しは生成段で作る。レプリカの語は、生成段で番地 rd_j・rd_k をレジスタに載せ、
+  // g1 の段で各レーンが LUTRAM を読んでレーンの中のレジスタに受け、g2 の段で 48 本から選んで作る
+  // （K = 48 で「状態 → 番地の選択 → LUTRAM → 48 本の選択」が 1 段に並んで WNS −2.7 ns になった）。
+  // 塗り分けは BRAM で、生成段で番地を載せると3段後の g3 と同じ時刻に col_rd2 に出る。
   reg [63:0] g_word;
   reg        g_last;
   always @(*) begin
@@ -235,19 +241,20 @@ module mc_core #(
       G_HDR: case (gsub)
         2'd0: g_word = {16'h4D43, s_reg, P8, d_in, n_reg};
         2'd1: g_word = cycles;
-        default: g_word = {K16, t_cur};
+        default: g_word = {K16, 16'd0, t_cur};
       endcase
-      G_REP: case (gsub)
-        2'd0: g_word = {32'd0, rd_c[rd_k], rd_best[rd_k]};
-        2'd1: g_word = {16'd0, rd_bt[rd_k]};
-        default: g_word = {16'd0, rd_ht[rd_k]};
-      endcase
+      G_REP: ;
       default: g_last = (gcnt == n_reg - 1) && (gcs == CB - 1);
     endcase
   end
+  reg [63:0] rep_word;   // g2 の段で、レーンが受けた語から作る
   always @(*) begin
-    rd_j = gcnt[JW-1:0];
-    rd_k = (K == 1) ? {KW{1'b0}} : gcnt[JW +: KW];
+    case (g2_sub)
+      2'd0: rep_word = {32'd0, rd_c[rd_k2], rd_best[rd_k2]};
+      // 全 1（無し）は 48 bit の全 1 に広げる（出力の形は変えない）
+      2'd1: rep_word = {16'd0, {16{rd_btn[rd_k2]}}, rd_bt[rd_k2]};
+      default: rep_word = {16'd0, {16{rd_htn[rd_k2]}}, rd_ht[rd_k2]};
+    endcase
   end
 
   // ---------------- 本体 ----------------
@@ -362,7 +369,7 @@ module mc_core #(
             ST_PRE: begin
               state <= ST_RUN;
               cur_valid <= 1'b1;
-              t_cur <= 48'd0;
+              t_cur <= 32'd0;
               cycles <= 64'd0;
               th0 <= sch_th[31:0];        // 窓 -1 の間ずっと番地 0 を読んでいる
               th1 <= sch_th[63:32];
@@ -414,6 +421,10 @@ module mc_core #(
         g1_col  <= (gsec == G_COL);
         g1_d    <= g_word;
         g1_last <= g_last;
+        g1_rep  <= (gsec == G_REP);
+        g1_sub  <= gsub;
+        rd_j    <= gcnt[JW-1:0];
+        rd_k    <= (K == 1) ? {KW{1'b0}} : gcnt[JW +: KW];
         g1_cs   <= gcs;
         col_ra  <= gcnt[NW-1:0];
         case (gsec)
@@ -440,11 +451,14 @@ module mc_core #(
       g2_v    <= g1_v;
       g2_col  <= g1_col;
       g2_d    <= g1_d;
+      g2_rep  <= g1_rep;
+      g2_sub  <= g1_sub;
+      rd_k2   <= rd_k;
       g2_last <= g1_last;
       g2_cs   <= g1_cs;
       g3_v    <= g2_v;
       g3_col  <= g2_col;
-      g3_d    <= g2_d;
+      g3_d    <= g2_rep ? rep_word : g2_d;
       g3_last <= g2_last;
       g3_cs   <= g2_cs;
 

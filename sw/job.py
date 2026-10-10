@@ -93,6 +93,7 @@ def pack_input(n, d, P, adj, rows, target, seeds, c0s, init_words):
 
 def expected_output(n, d, P, rows, reps, final_words):
     WT = sum(m for m, _ in rows) * n
+    assert WT < (1 << 32) - 1, "回路の試行番号は 32 bit（全 1 は「無し」）。1 ジョブの窓の数を減らす"
     K = len(reps) // P
     beats = [n | (d << 16) | (P << 24) | (len(rows) << 32) | (MAGIC << 48),
              (WT + 1) * P,          # 走ったサイクル数（設計値。docs/m1-design.md）
