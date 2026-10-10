@@ -1,0 +1,10 @@
+# 手元用（公開しない）。CLAUDE.md は開発記録
+CLAUDE.md
+.claude/
+
+.DS_Store
+__pycache__/
+*.pyc
+
+# 焼いたもの
+sw/sa
