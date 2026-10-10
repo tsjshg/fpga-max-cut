@@ -8,7 +8,7 @@ CFLAGS ?= -O3 -mcpu=native
 endif
 CFLAGS += -std=c11 -Wall -Wextra
 
-all: sa sa_fast
+all: sa sa_fast pt
 
 sa: sa.c
 	$(CC) $(CFLAGS) -o $@ $< -lpthread
@@ -16,5 +16,8 @@ sa: sa.c
 sa_fast: sa_fast.c sa_fast_grp.h xs_fused.h
 	$(CC) $(CFLAGS) -o $@ $< -lpthread
 
+pt: pt.c
+	$(CC) $(CFLAGS) -o $@ $< -lpthread
+
 clean:
-	rm -f sa sa_fast
+	rm -f sa sa_fast pt
