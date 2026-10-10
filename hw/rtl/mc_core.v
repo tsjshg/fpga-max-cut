@@ -156,6 +156,7 @@ module mc_core #(
   reg [31:0]   sweep_cnt, cur_sweeps;
   reg [31:0]   th0, th1;
   reg [63:0]   cycles;
+  reg          f_vnext_last, f_vcur_last, f_sweep_last, f_stage_last;
 
   wire [W-1:0] own_prev = curbuf ? own0 : own1;   // 書き戻し用（o = O_WB でだけ使う）
   wire win_end = (o == P - 1);
@@ -332,6 +333,12 @@ module mc_core #(
       end
 
       // ======== 窓（-1、0 … WT-1、WT） ========
+      // 窓の境目で使う比較は、前のクロックで済ませておく（比べる値は前の境目より後には変わらないので、
+      // 16 クロック先の境目には間に合う。142.86 MHz で 32 bit の比較の桁上げが最悪経路だった）
+      f_vnext_last <= (vnext == n_reg - 1);
+      f_vcur_last  <= (vcur == n_reg - 1);
+      f_sweep_last <= (sweep_cnt + 1 == cur_sweeps);
+      f_stage_last <= (stage + 1 == s_reg);
       if (in_win) begin
         o <= o + 1;
         if (state != ST_PRE) cycles <= cycles + 1;
@@ -359,7 +366,7 @@ module mc_core #(
         if (win_end) begin
           vprev <= vcur;
           vcur  <= vnext;
-          vnext <= (vnext == n_reg - 1) ? 0 : vnext + 1;
+          vnext <= f_vnext_last ? 0 : vnext + 1;
           prev_valid <= cur_valid;
           for (i = 0; i < D; i = i + 1) nb[i] <= nbn[i];
           fwd <= fwdn;
@@ -378,10 +385,10 @@ module mc_core #(
             end
             ST_RUN: begin
               t_cur <= t_cur + 1;
-              if (vcur == n_reg - 1) begin
-                if (sweep_cnt + 1 == cur_sweeps) begin
+              if (f_vcur_last) begin
+                if (f_sweep_last) begin
                   sweep_cnt <= 0;
-                  if (stage + 1 == s_reg) begin
+                  if (f_stage_last) begin
                     state <= ST_POST;
                     cur_valid <= 1'b0;
                   end else begin
