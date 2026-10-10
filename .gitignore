@@ -8,6 +8,7 @@ __pycache__/
 
 # 焼いたもの
 sw/sa
+sw/sa_fast
 # Vivado のプロジェクトと作業ファイル（build.tcl からいつでも作り直せる）
 hw/prj_*/
 hw/.Xil/
