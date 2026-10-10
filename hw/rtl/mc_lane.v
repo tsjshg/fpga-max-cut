@@ -36,11 +36,11 @@ module mc_lane #(
   output wire          s3_buf_o,
   output wire [JW-1:0] s3_j_o,
 
-  // ---- 読み込み（ジョブの始め） ----
-  input  wire          ld_seed_we,
-  input  wire          ld_c0_we,
-  input  wire [JW-1:0] ld_j,
-  input  wire [63:0]   ld_data,
+  // ---- 読み込み（ジョブの始め）。レーンの中で1段レジスタに受けてから使う ----
+  input  wire          ld_seed_we_i,
+  input  wire          ld_c0_we_i,
+  input  wire [JW-1:0] ld_j_i,
+  input  wire [63:0]   ld_data_i,
 
   // ---- 結果の読み出し（非同期） ----
   input  wire [JW-1:0] rd_j,
@@ -49,6 +49,19 @@ module mc_lane #(
   output wire [47:0]   rd_best_t,
   output wire [47:0]   rd_hit_t
 );
+
+  // 読み込みの信号は全レーンに配られる大きな扇形なので、レーンごとに1段受ける
+  // （K = 48 で、これが LUTRAM の書き番地の選択まで届いてタイミングを落としていた）。
+  // 読み込みは窓 -1 より前に終わるので、1クロック遅れても走りには影響しない。
+  reg          ld_seed_we, ld_c0_we;
+  reg [JW-1:0] ld_j;
+  reg [63:0]   ld_data;
+  always @(posedge clk) begin
+    ld_seed_we <= ld_seed_we_i;
+    ld_c0_we   <= ld_c0_we_i;
+    ld_j       <= ld_j_i;
+    ld_data    <= ld_data_i;
+  end
 
   // ---------------- レプリカごとの記憶 ----------------
   (* ram_style = "distributed" *) reg [63:0] xs_mem    [0:P-1];

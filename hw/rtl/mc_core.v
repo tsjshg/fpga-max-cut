@@ -195,9 +195,9 @@ module mc_core #(
         .s0_nb(nbbits), .s0_own(ownc),
         .s0_th0(th0), .s0_th1(th1), .target(target),
         .s3_flip(s3_flip[gk]), .s3_buf_o(s3_buf[gk]), .s3_j_o(s3_j[gk]),
-        .ld_seed_we(beat && lsec == L_SEED && kmatch),
-        .ld_c0_we(beat && lsec == L_C0 && kmatch),
-        .ld_j(ld_j), .ld_data(din),
+        .ld_seed_we_i(beat && lsec == L_SEED && kmatch),
+        .ld_c0_we_i(beat && lsec == L_C0 && kmatch),
+        .ld_j_i(ld_j), .ld_data_i(din),
         .rd_j(rd_j), .rd_best(rd_best[gk]), .rd_c(rd_c[gk]),
         .rd_best_t(rd_bt[gk]), .rd_hit_t(rd_ht[gk]));
     end

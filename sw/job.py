@@ -105,13 +105,13 @@ def expected_output(n, d, P, rows, reps, final_words):
     return beats
 
 
-def make_job(sa, graph, sched, K, P, seed, target, tmpdir):
-    """(入力のビート列, 期待する出力のビート列, レプリカの結果) を返す。"""
+def make_job(sa, graph, sched, K, P, seed, target, tmpdir, extra=()):
+    """(入力のビート列, 期待する出力のビート列, レプリカの結果) を返す。extra は sa への追加の引数（-j など）。"""
     n, d, adj = read_graph(graph)
     sd, rows = read_sched(sched)
     assert sd == d
     R = K * P
-    reps, cols0, cols1 = run_sa(sa, graph, sched, R, seed, target, tmpdir)
+    reps, cols0, cols1 = run_sa(sa, graph, sched, R, seed, target, tmpdir, extra)
     inp = pack_input(n, d, P, adj, rows, target, [r["seed"] for r in reps], [r["c0"] for r in reps],
                      color_words(cols0, n))
     exp = expected_output(n, d, P, rows, reps, color_words(cols1, n))

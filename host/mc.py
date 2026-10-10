@@ -39,7 +39,7 @@ if os.geteuid() != 0:
 
 with tempfile.TemporaryDirectory() as tmp:
     t0 = time.perf_counter()
-    inp, exp, reps = job.make_job(a.sa, a.graph, a.sched, a.K, P, a.seed, a.target, tmp)
+    inp, exp, reps = job.make_job(a.sa, a.graph, a.sched, a.K, P, a.seed, a.target, tmp, ("-j", "2"))
     t_cpu = time.perf_counter() - t0
 
 ol = Overlay(a.bit)
@@ -81,7 +81,7 @@ for r in range(a.rep):
             print(f"  word {i}: got {int(got[i]):016x} want {int(want[i]):016x}")
 
 best = [rp["best"] for rp in reps]
-print(f"best: mean {np.mean(best):.2f} max {max(best)}; CPU (sa, 1 thread, incl. startup) {t_cpu * 1e3:.1f} ms")
+print(f"best: mean {np.mean(best):.2f} max {max(best)}; CPU (sa, 2 threads, incl. startup) {t_cpu * 1e3:.1f} ms")
 src.freebuffer()
 dst.freebuffer()
 sys.exit(0 if ok else 1)
