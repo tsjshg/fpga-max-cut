@@ -1,0 +1,882 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>最大カット問題を FPGA で解く</title>
+<meta name="description" content="最大カット問題とは何か、どんな解き方があるか、焼きなまし法の要点、そしてそれを PYNQ-Z1 の FPGA にどう載せたかの解説。">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Shippori+Mincho+B1:wght@700&family=Zen+Kaku+Gothic+New:wght@400;500;700&family=M+PLUS+1+Code:wght@400;500;700&display=swap">
+<style>
+  :root{
+    --paper:#F4F6F7; --card:#FFFFFF;
+    --ink:#1A2027; --ink-2:#5C666F; --ink-3:#8B959D;
+    --rule:#D9DFE3; --rule-2:#EAEEF0;
+    --path:#1F5FA9; --path-soft:#E4EDF7;   /* 色 0・データの流れ */
+    --ddr:#C0701A;  --ddr-soft:#F9EEE1;    /* 色 1・メモリ */
+    --tri:#136B57;  --tri-soft:#DFF0EA;    /* FPGA */
+    --attn:#6B4FA0; --attn-soft:#EDE7F6;
+    --cpu:#77818A; --onfill:#FFFFFF;
+    --wrong:#A33A3A; --wrong-soft:#F7E9E9;
+    --serif:"Shippori Mincho B1",'Hiragino Mincho ProN',"Yu Mincho",serif;
+    --sans:"Zen Kaku Gothic New",'Hiragino Sans',"Yu Gothic",system-ui,sans-serif;
+    --mono:"M PLUS 1 Code",ui-monospace,"SFMono-Regular",Menlo,monospace;
+  }
+  @media (prefers-color-scheme: dark){
+    :root:not([data-theme="light"]){
+      color-scheme:dark;
+      --paper:#14181C; --card:#1B2126; --ink:#E6EAED; --ink-2:#A3ADB5; --ink-3:#727C84;
+      --rule:#2E363D; --rule-2:#232A30;
+      --path:#6FA8E8; --path-soft:#1C2A3A;
+      --ddr:#E0A05B;  --ddr-soft:#332617;
+      --tri:#5CC4A7;  --tri-soft:#12302A;
+      --attn:#B49BE8; --attn-soft:#261E3A;
+      --cpu:#8F9AA3; --onfill:#0F1418;
+      --wrong:#DF8C8C; --wrong-soft:#33201F;
+    }
+  }
+  :root[data-theme="dark"]{
+    color-scheme:dark;
+    --paper:#14181C; --card:#1B2126; --ink:#E6EAED; --ink-2:#A3ADB5; --ink-3:#727C84;
+    --rule:#2E363D; --rule-2:#232A30;
+    --path:#6FA8E8; --path-soft:#1C2A3A;
+    --ddr:#E0A05B;  --ddr-soft:#332617;
+    --tri:#5CC4A7;  --tri-soft:#12302A;
+    --attn:#B49BE8; --attn-soft:#261E3A;
+    --cpu:#8F9AA3; --onfill:#0F1418;
+    --wrong:#DF8C8C; --wrong-soft:#33201F;
+  }
+
+  *{box-sizing:border-box}
+  body{
+    margin:0;background:var(--paper); color:var(--ink); font-family:var(--sans);
+    font-size:16px; line-height:1.9; -webkit-font-smoothing:antialiased;
+  }
+  .wrap{max-width:760px;margin:0 auto;padding:0 16px 96px;}
+  @media (min-width:600px){ .wrap{padding:0 24px 96px;} }
+
+  .jnav{max-width:760px;margin:0 auto;padding:14px 16px 0;display:flex;flex-wrap:wrap;
+        gap:4px 18px;font-size:12.5px;line-height:1.7;opacity:.8}
+  .jnav a{color:inherit;text-underline-offset:3px;text-decoration-thickness:1px}
+  .jnav .lang{margin-left:auto}
+  @media (min-width:600px){ .jnav{padding:14px 24px 0} }
+
+  header{padding:56px 0 40px;border-bottom:1px solid var(--rule);}
+  .eyebrow{
+    font-family:var(--mono);font-size:11px;letter-spacing:.18em;
+    color:var(--ink-3);text-transform:uppercase;margin-bottom:20px;
+  }
+  h1{
+    font-family:var(--serif);font-weight:700;
+    font-size:clamp(34px,6.6vw,54px);line-height:1.25;
+    margin:0 0 20px;text-wrap:balance;letter-spacing:.01em;
+  }
+  .standfirst{font-size:17px;color:var(--ink-2);margin:0 0 14px;max-width:60ch;}
+  .toc{margin:28px 0 0;padding:14px 0 0;border-top:1px solid var(--rule-2);font-size:14px;color:var(--ink-2);}
+  .toc ol{margin:0;padding-left:1.6em;}
+  .toc li{margin:0;}
+  .toc a{color:inherit;}
+
+  section{margin-top:60px;}
+  h2{
+    font-family:var(--serif);font-weight:700;font-size:clamp(21px,4.4vw,26px);line-height:1.5;
+    margin:0 0 8px;display:flex;gap:16px;align-items:baseline;text-wrap:balance;
+  }
+  h2 .n{font-family:var(--mono);font-size:13px;font-weight:700;color:var(--path);flex:none;padding-top:2px;}
+  h2 + .sub{font-family:var(--mono);font-size:12px;color:var(--ink-3);margin:0 0 24px 39px;letter-spacing:.04em;}
+  h3{font-size:17px;font-weight:700;margin:36px 0 10px;}
+  p{margin:0 0 18px;}
+
+  figure{
+    margin:34px 0;background:var(--card);border:1px solid var(--rule);
+    border-radius:3px;padding:22px 16px 16px;
+  }
+  @media (min-width:600px){ figure{padding:26px 22px 18px;} }
+  .fig-scroll{overflow-x:auto;}
+  figure svg{display:block;width:100%;min-width:560px;height:auto;}
+  figure svg text{font-family:var(--sans);}
+  figcaption{
+    margin-top:18px;padding-top:14px;border-top:1px solid var(--rule-2);
+    font-size:13px;line-height:1.75;color:var(--ink-2);
+  }
+  figcaption b{color:var(--ink);font-weight:700;}
+
+  /* 図の部品 */
+  .ink{fill:var(--ink)} .ink2{fill:var(--ink-2)} .ink3{fill:var(--ink-3)} .onfill{fill:var(--onfill)}
+  .path{fill:var(--path)} .tri{fill:var(--tri)}
+  .v0{fill:var(--path)} .v1{fill:var(--ddr)}
+  .cut{stroke:var(--ink);stroke-width:3} .uncut{stroke:var(--ink-3);stroke-width:1.5;stroke-dasharray:5 5}
+  .arrow{stroke:var(--ink-2);stroke-width:1.5;fill:none} .ink2f{fill:var(--ink-2)} .pathf{fill:var(--path)}
+  .hot{fill:var(--path)} .warm{fill:var(--path-soft)} .cell{fill:var(--rule-2)}
+  .loop{stroke:var(--path);stroke-width:1.5;fill:none} .brace{stroke:var(--ink-3);stroke-width:1}
+  .bar-tri{fill:var(--tri-soft);stroke:var(--tri)} .bar-path{fill:var(--path-soft);stroke:var(--path)}
+  .bar-ddr{fill:var(--ddr-soft);stroke:var(--ddr)} .edge{stroke:var(--ink-3);stroke-dasharray:3 3}
+  .box{fill:var(--card);stroke:var(--rule)} .box2{fill:var(--rule-2);stroke:var(--rule)}
+  .boxpl{fill:none;stroke:var(--tri);stroke-dasharray:6 4} .boxl{fill:var(--tri-soft);stroke:var(--tri)}
+  .lane{fill:var(--card);stroke:var(--tri)} .grid{stroke:var(--rule-2)}
+  .b-fpga{fill:var(--tri)} .b-cpu{fill:var(--cpu)}
+
+  .math{font-family:var(--mono);font-size:15px;background:var(--card);border:1px solid var(--rule);
+        border-radius:3px;padding:14px 16px;margin:0 0 20px;overflow-x:auto;white-space:pre;line-height:1.8;}
+  .tbl-scroll{overflow-x:auto;margin:26px 0;}
+  table{border-collapse:collapse;width:100%;font-size:14px;min-width:500px;}
+  th,td{padding:10px 12px;text-align:right;border-bottom:1px solid var(--rule-2);vertical-align:top;}
+  th:first-child,td:first-child{text-align:left;}
+  thead th{font-family:var(--mono);font-size:11px;letter-spacing:.06em;color:var(--ink-3);font-weight:500;border-bottom:1px solid var(--rule);}
+  tbody td{font-family:var(--mono);font-variant-numeric:tabular-nums;}
+  tbody td:first-child{font-family:var(--sans);}
+  tbody td.t{font-family:var(--sans);text-align:left;color:var(--ink-2);font-size:13.5px;}
+  table.alg td{text-align:left;font-family:var(--sans);}
+  table.alg td:first-child{font-weight:700;white-space:nowrap;}
+  tr.hit td{background:var(--tri-soft);}
+  tr.hit td strong{color:var(--tri);}
+
+  .callout{border-left:3px solid var(--path);background:var(--path-soft);padding:18px 20px;margin:28px 0;border-radius:0 3px 3px 0;}
+  .callout p:last-child,.callout ul:last-child{margin-bottom:0;}
+  .callout .label{font-family:var(--mono);font-size:11px;letter-spacing:.12em;color:var(--path);display:block;margin-bottom:8px;}
+  .callout.win{border-left-color:var(--tri);background:var(--tri-soft);}
+  .callout.win .label{color:var(--tri);}
+  .callout.fix{border-left-color:var(--wrong);background:var(--wrong-soft);}
+  .callout.fix .label{color:var(--wrong);}
+
+  .keyline{
+    font-family:var(--serif);font-size:clamp(19px,3.6vw,22px);line-height:1.7;margin:34px 0;padding:22px 0;
+    border-top:2px solid var(--ink);border-bottom:2px solid var(--ink);text-wrap:balance;
+  }
+  ul,ol{margin:0 0 18px;padding-left:1.3em;}
+  li{margin-bottom:10px;}
+  code{font-family:var(--mono);font-size:.9em;background:var(--rule-2);padding:1px 5px;border-radius:3px;}
+  a{color:var(--path);text-underline-offset:2px;}
+  a:focus-visible{outline:2px solid var(--attn);outline-offset:3px;}
+  .refs{font-size:13.5px;color:var(--ink-2);}
+  .refs li{margin-bottom:6px;}
+  footer{margin-top:72px;padding-top:26px;border-top:1px solid var(--rule);font-size:13px;color:var(--ink-3);}
+</style>
+</head>
+<body>
+<nav class="jnav" aria-label="ナビゲーション">
+  <a href="../index.html">目次</a>
+  <a href="https://github.com/tsjshg/fpga-max-cut">GitHub: fpga-max-cut</a>
+  <a class="lang" href="../en/max-cut-on-fpga.html" hreflang="en" lang="en">English</a>
+</nav>
+<div class="wrap">
+
+<header>
+  <div class="eyebrow">fpga-max-cut · 解説 · 2026-10-10</div>
+  <h1>最大カット問題を FPGA で解く</h1>
+  <p class="standfirst">
+    グラフを 2 色に塗り分けて、色の違う辺をなるべく多くする。問題の言い方は単純ですが、厳密に解くのはとても難しい問題です。
+    このページでは、最大カット問題とは何か、どんな解き方があるかを整理します。そのうえで、今回選んだ<b>焼きなまし法</b>の要点と、
+    それを <b>PYNQ-Z1 の FPGA に自作の回路として載せた方法</b>までを説明します。
+  </p>
+  <p class="standfirst">
+    数字は断りが無いかぎり実測です。実装と測定の記録は
+    <a href="https://github.com/tsjshg/fpga-max-cut">GitHub のリポジトリ</a>にあります。
+  </p>
+  <nav class="toc" aria-label="目次">
+    <ol>
+      <li><a href="#s1">最大カット問題とは</a></li>
+      <li><a href="#s2">どんな解き方があるか</a></li>
+      <li><a href="#s3">焼きなまし法</a></li>
+      <li><a href="#s4">FPGA でどう作ったか</a></li>
+      <li><a href="#s5">結果：速さでは M4 に負ける</a></li>
+    </ol>
+  </nav>
+</header>
+
+<!-- ============================================================ -->
+<section id="s1">
+  <h2><span class="n">01</span><span>最大カット問題とは</span></h2>
+  <p class="sub">what Max-Cut is</p>
+
+  <p>
+    グラフ（頂点と、頂点どうしを結ぶ辺の集まり）の頂点を、2 つの組に分けます。ここでは「色 0」と「色 1」に塗り分けると考えます。
+    両端の色が違う辺を<b>カット</b>と呼びます。<b>カットになる辺の本数が最大になる塗り分けを探す</b>のが最大カット問題（Max-Cut）です。
+    辺に重みが付いた版もありますが、このプロジェクトでは重みの無い版だけを扱います。
+  </p>
+
+  <figure>
+    <div class="fig-scroll"><!--FIG:graph--><svg viewBox="0 0 760 330" role="img" aria-label="6 頂点・9 辺のグラフ（三角柱）の塗り分けの例。A、E、F が色 0、B、C、D が色 1。両端の色が違う 7 本の辺がカットになり、B-C と E-F の 2 本はならない。">
+<line x1="430" y1="44" x2="220" y2="292" class="cut"/>
+<line x1="430" y1="44" x2="640" y2="292" class="cut"/>
+<line x1="220" y1="292" x2="640" y2="292" class="uncut"/>
+<line x1="430" y1="142" x2="345" y2="238" class="cut"/>
+<line x1="430" y1="142" x2="515" y2="238" class="cut"/>
+<line x1="345" y1="238" x2="515" y2="238" class="uncut"/>
+<line x1="430" y1="44" x2="430" y2="142" class="cut"/>
+<line x1="220" y1="292" x2="345" y2="238" class="cut"/>
+<line x1="640" y1="292" x2="515" y2="238" class="cut"/>
+<circle cx="430" cy="44" r="19" class="v0"/>
+<text x="430" y="49" class="onfill" font-size="15" text-anchor="middle" font-weight="700">A</text>
+<circle cx="220" cy="292" r="19" class="v1"/>
+<text x="220" y="297" class="onfill" font-size="15" text-anchor="middle" font-weight="700">B</text>
+<circle cx="640" cy="292" r="19" class="v1"/>
+<text x="640" y="297" class="onfill" font-size="15" text-anchor="middle" font-weight="700">C</text>
+<circle cx="430" cy="142" r="19" class="v1"/>
+<text x="430" y="147" class="onfill" font-size="15" text-anchor="middle" font-weight="700">D</text>
+<circle cx="345" cy="238" r="19" class="v0"/>
+<text x="345" y="243" class="onfill" font-size="15" text-anchor="middle" font-weight="700">E</text>
+<circle cx="515" cy="238" r="19" class="v0"/>
+<text x="515" y="243" class="onfill" font-size="15" text-anchor="middle" font-weight="700">F</text>
+<circle cx="34" cy="40" r="9" class="v0"/><text x="52" y="45" class="ink2" font-size="13" text-anchor="start">色 0</text>
+<circle cx="34" cy="68" r="9" class="v1"/><text x="52" y="73" class="ink2" font-size="13" text-anchor="start">色 1</text>
+<line x1="22" y1="98" x2="46" y2="98" class="cut"/><text x="52" y="103" class="ink2" font-size="13" text-anchor="start">カットになる辺（7 本）</text>
+<line x1="22" y1="126" x2="46" y2="126" class="uncut"/><text x="52" y="131" class="ink2" font-size="13" text-anchor="start">ならない辺（2 本）</text>
+</svg><!--/FIG--></div>
+    <figcaption>
+      <b>6 頂点・9 辺のグラフの塗り分けの例。</b>太線がカットになる辺で、9 本中 7 本です。
+      三角形の辺は 3 本とも同時にはカットにできない（3 頂点を 2 色に塗ると、必ずどこかに同じ色の組ができる）ので、
+      2 つの三角形から 2 本ずつ、縦の 3 本を合わせた 7 本がこのグラフの最大です。
+    </figcaption>
+  </figure>
+
+  <p>式で書くと、頂点 v の色を s<sub>v</sub> ∈ {0, 1} として、次の値を最大にする s を探します。</p>
+  <div class="math">C(s) = Σ<sub>(u,v) ∈ E</sub> [ s<sub>u</sub> ≠ s<sub>v</sub> ]      （[ ] は条件が成り立てば 1、成り立たなければ 0）</div>
+  <p>
+    n 頂点のグラフには、塗り分けが 2<sup>n</sup> 通りあります（色を全部入れ替えても同じカットなので、実質は 2<sup>n−1</sup> 通り）。
+    このプロジェクトで使う n = 1024 なら 2<sup>1023</sup> ≈ 10<sup>308</sup> 通りで、全部を調べることはできません。
+  </p>
+  <p>
+    難しさも理論的に分かっています。最大カット問題（の判定版）は、Karp が 1972 年に示した 21 の NP 完全問題の一つです。
+    近似も難しく、最適値の 16/17 ≈ 0.941 倍を超える保証つきの近似は、P = NP でないかぎりできないことが知られています（Håstad 2001）。
+  </p>
+
+  <div class="callout">
+    <span class="label">イジング模型との関係</span>
+    <p>
+      色を σ<sub>v</sub> = ±1（色 0 なら +1、色 1 なら −1）に置き換えると、辺 (u, v) がカットのとき σ<sub>u</sub>σ<sub>v</sub> = −1、そうでないとき +1 になります。
+      したがって C = Σ (1 − σ<sub>u</sub>σ<sub>v</sub>) / 2 で、<b>カットを最大にすることは Σ σ<sub>u</sub>σ<sub>v</sub> を最小にすること</b>と同じです。
+      これは、隣どうしが逆向きになりたがる磁石の模型（反強磁性イジング模型）のエネルギーを最小にする問題そのものです。
+      そのため最大カット問題は、量子アニーリング機やイジングマシンの性能比較の定番になっています。
+    </p>
+  </div>
+
+  <p>
+    応用もあります。たとえば、プリント基板や LSI の配線を 2 つの層に割り当てて層間の穴（ビア）を減らす問題や、
+    統計物理でスピングラスの最もエネルギーの低い状態を探す問題が、最大カット問題の形になります。
+  </p>
+</section>
+
+<!-- ============================================================ -->
+<section id="s2">
+  <h2><span class="n">02</span><span>どんな解き方があるか</span></h2>
+  <p class="sub">exact, approximate, heuristic, special hardware</p>
+
+  <p>解き方は、何を保証するかで大きく 4 つに分けられます。</p>
+
+  <div class="tbl-scroll">
+  <table class="alg">
+    <thead><tr><th>考え方</th><th>代表的な方法</th><th>得られるもの</th></tr></thead>
+    <tbody>
+      <tr><td>厳密に解く</td><td>分枝限定法。上界に半正定値計画（SDP）を使う BiqMac など</td><td>最適値とその証明。ただし大きさに限りがあり、ランダムなグラフでは数百頂点でも難しくなる</td></tr>
+      <tr><td>保証つきの近似</td><td>ランダムに塗る（期待値で辺の半分）。Goemans–Williamson 法（1995、SDP を解いて乱択で丸める）</td><td>最適値の何倍以上という保証。Goemans–Williamson 法は約 0.878 倍で、ある予想（Unique Games 予想）のもとではこれが最良</td></tr>
+      <tr><td>速くよい解を探す（ヒューリスティクス）</td><td>局所探索、<b>焼きなまし法</b>、タブー探索（Breakout Local Search など）、低ランク緩和（Burer–Monteiro–Zhang）、レプリカ交換法</td><td>保証は無いが、実際には最適かそれに近い解が速く出ることが多い。ベンチマーク集 G-set の最良既知値はこの系統の方法で更新されてきた</td></tr>
+      <tr><td>専用の計算機</td><td>量子アニーリング機（D-Wave）、コヒーレントイジングマシン、デジタルアニーラ、シミュレーテッド分岐マシン（FPGA・GPU で動く）</td><td>イジング模型の形にした問題を、専用の仕組みで並列に探す</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <p>
+    このプロジェクトは 3 つ目、<b>最適性の証明は扱わず、よい解を速く得る</b>側です。その中から焼きなまし法を選びました。
+    理由は 3 つあります。手順が単純であること、整数だけで書けること、独立な探索をたくさん並べやすいことです。
+    どれも回路にしやすい性質で、4 つ目の「専用の計算機」を手作りで小さく試すことにもなっています。
+  </p>
+</section>
+
+<!-- ============================================================ -->
+<section id="s3">
+  <h2><span class="n">03</span><span>焼きなまし法</span></h2>
+  <p class="sub">simulated annealing, as used here</p>
+
+  <h3>1 頂点ずつ反転する</h3>
+  <p>
+    いちばん素朴な方法は局所探索です。頂点を 1 つ選び、その色を反転するとカットが増えるなら反転する。これを、どの頂点を反転しても増えなくなるまで続けます。
+    頂点 v を反転したときのカットの増え方 ΔC は、v の隣だけを見れば分かります。
+    v と同じ色の隣の数を n<sub>same</sub>、違う色の隣の数を n<sub>opp</sub> とすると、反転によって同じ色の隣との辺はカットになり、違う色の隣との辺はカットでなくなります。
+  </p>
+  <div class="math">ΔC = n_same − n_opp = 2·n_same − d      （d は v の次数 = 隣の数）</div>
+
+  <figure>
+    <div class="fig-scroll"><!--FIG:flip--><svg viewBox="0 0 760 290" role="img" aria-label="頂点 v を反転する前と後。v には隣が 4 つあり、3 つが v と同じ色、1 つが違う色。反転の前はカット 1 本、後はカット 3 本で、ΔC = 3 − 1 = +2。">
+<line x1="170" y1="130" x2="170" y2="48" class="uncut"/>
+<line x1="170" y1="130" x2="66" y2="130" class="uncut"/>
+<line x1="170" y1="130" x2="170" y2="212" class="uncut"/>
+<line x1="170" y1="130" x2="274" y2="130" class="cut"/>
+<circle cx="170" cy="48" r="15" class="v0"/>
+<circle cx="66" cy="130" r="15" class="v0"/>
+<circle cx="170" cy="212" r="15" class="v0"/>
+<circle cx="274" cy="130" r="15" class="v1"/>
+<circle cx="170" cy="130" r="21" class="v0"/><text x="170" y="136" class="onfill" font-size="17" text-anchor="middle" font-weight="700">v</text>
+<text x="170" y="22" class="ink3" font-size="12" text-anchor="middle" letter-spacing=".08em">反転の前</text>
+<text x="170" y="268" class="ink" font-size="14" text-anchor="middle" font-weight="700">カット 1 本</text>
+<line x1="590" y1="130" x2="590" y2="48" class="cut"/>
+<line x1="590" y1="130" x2="486" y2="130" class="cut"/>
+<line x1="590" y1="130" x2="590" y2="212" class="cut"/>
+<line x1="590" y1="130" x2="694" y2="130" class="uncut"/>
+<circle cx="590" cy="48" r="15" class="v0"/>
+<circle cx="486" cy="130" r="15" class="v0"/>
+<circle cx="590" cy="212" r="15" class="v0"/>
+<circle cx="694" cy="130" r="15" class="v1"/>
+<circle cx="590" cy="130" r="21" class="v1"/><text x="590" y="136" class="onfill" font-size="17" text-anchor="middle" font-weight="700">v</text>
+<text x="590" y="22" class="ink3" font-size="12" text-anchor="middle" letter-spacing=".08em">反転の後</text>
+<text x="590" y="268" class="ink" font-size="14" text-anchor="middle" font-weight="700">カット 3 本</text>
+<line x1="320" y1="130" x2="430" y2="130" class="arrow" marker-end="url(#ah)"/>
+<defs><marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto"><path d="M0,0 L10,5 L0,10 z" class="ink2f"/></marker></defs>
+<text x="375" y="116" class="ink2" font-size="13" text-anchor="middle">v を反転</text>
+<text x="380" y="200" class="path" font-size="14" text-anchor="middle" font-weight="700" font-family="var(--mono)">ΔC = n_same − n_opp = 3 − 1 = +2</text>
+</svg><!--/FIG--></div>
+    <figcaption>
+      <b>反転でカットがどれだけ変わるかは、隣を見るだけで決まる。</b>次数 4 の頂点 v で、同じ色の隣が 3 つ、違う色の隣が 1 つなら、
+      反転するとカットが 1 本から 3 本に増え、ΔC = +2 です。
+    </figcaption>
+  </figure>
+
+  <h3>悪くなる反転も、ときどき受け入れる</h3>
+  <p>
+    局所探索は、どの反転でも良くならない状態（局所最適）で止まってしまいます。焼きなまし法（Kirkpatrick ほか 1983）はここを越えるために、
+    <b>カットが減る反転も確率 e<sup>ΔC/T</sup> で受け入れます</b>（Metropolis 法）。T は「温度」で、初めは高くしてよく受け入れ、だんだん下げて最後はほとんど受け入れないようにします。
+    金属をゆっくり冷やして結晶を整える「焼きなまし」になぞらえた名前です。
+  </p>
+  <p>次数 d が全頂点で同じなら、ΔC は d + 1 通りしかありません。このプロジェクトで使う d = 4 では次のとおりです。</p>
+
+  <div class="tbl-scroll">
+  <table>
+    <thead><tr><th>同じ色の隣 n_same</th><th>ΔC</th><th>受け入れる確率</th><th>T = 0.8（はじめ）</th><th>T = 0.2（おわり）</th></tr></thead>
+    <tbody>
+      <tr><td>0</td><td>−4</td><td>e<sup>−4/T</sup></td><td>0.0067</td><td>2.1 × 10<sup>−9</sup></td></tr>
+      <tr><td>1</td><td>−2</td><td>e<sup>−2/T</sup></td><td>0.082</td><td>4.5 × 10<sup>−5</sup></td></tr>
+      <tr><td>2</td><td>0</td><td>1</td><td>1</td><td>1</td></tr>
+      <tr><td>3</td><td>+2</td><td>1</td><td>1</td><td>1</td></tr>
+      <tr><td>4</td><td>+4</td><td>1</td><td>1</td><td>1</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <h3>このプロジェクトでの決めごと</h3>
+  <ul>
+    <li><b>頂点は 0, 1, …, n−1 の順に回す</b>（1 巡りを 1 周回と呼ぶ）。毎回ランダムに選ぶより、目標に届くまでの時間が約 4 倍短くなりました（実測）。回路にとっても都合がよいのは後で説明します。</li>
+    <li><b>温度は 0.8 から 0.2 まで幾何級数で 100 段</b>、各段 10 周回、合わせて 1000 周回。初めと終わりの温度は、CPU 版で格子状に試して決めました。</li>
+    <li><b>乱数はレプリカごとの xorshift64</b>（Marsaglia 2003）。1 試行に必ず 1 回進め、上位 32 bit を r とします。</li>
+    <li><b>exp は計算しない。</b>受け入れの判定は「ΔC ≥ 0、または r &lt; TH[n_same]」だけにします。
+      しきい値の表 TH = ⌊e<sup>ΔC/T</sup> · 2<sup>32</sup>⌋ は、温度の段ごとに CPU が 1 回だけ計算して整数にします。</li>
+  </ul>
+
+  <div class="callout win">
+    <span class="label">ビット単位で同じ探索</span>
+    <p>
+      浮動小数を使うのは、しきい値の表を作る一瞬だけです。そのあとは整数だけなので、
+      <b>Mac・ボードの ARM・FPGA の回路が、同じ種から最後のビットまで同じ探索をします</b>。
+      そのおかげで、回路の出力を CPU 版と全語で照合できます。また、目標に届くまでの試行回数はどこで走らせても同じなので、
+      速さの比較は「1 秒に何回試行できるか」の比較になります。
+    </p>
+  </div>
+
+  <h3>たくさん並べて、到達時間で測る</h3>
+  <p>
+    初期の塗り分けと乱数の種だけが違う焼きなまし（<b>レプリカ</b>）を、何百本も同時に走らせます。
+    評価には、イジングマシンの分野でよく使う <b>TTS99</b> を使います。長さ τ の焼きなまし 1 回で目標のカット値に届く割合が p なら、
+    99% の確率で一度は届くまでの時間は τ · ln(0.01) / ln(1 − p) です。
+  </p>
+  <p>
+    n = 1024 のランダム 4 正則グラフ（辺 2048 本）では、標準のスケジュール 1 回で、最良既知値 1774 に届くレプリカが約 57% ありました。
+    TTS99 は約 5,500 周回、1 レプリカあたり約 570 万試行です（実測）。1774 が最適かどうかは分かっていません。
+  </p>
+</section>
+
+<!-- ============================================================ -->
+<section id="s4">
+  <h2><span class="n">04</span><span>FPGA でどう作ったか</span></h2>
+  <p class="sub">PYNQ-Z1 · Zynq XC7Z020 · 125 MHz</p>
+
+  <p>
+    PYNQ-Z1 は、ARM Cortex-A9 が 2 つと FPGA が 1 つのチップ（Zynq XC7Z020）に載ったボードです。
+    FPGA の部分は、LUT（小さな論理回路）53,200 個、フリップフロップ 106,400 個、ブロック RAM（36 Kb）140 個でできています。
+    焼きなましの回路はすべて Verilog で手書きし、125 MHz で動かしました。
+  </p>
+
+  <figure>
+    <div class="fig-scroll"><!--FIG:system--><svg viewBox="0 0 760 250" role="img" aria-label="全体の構成。ARM がジョブ（グラフ・初期の塗り分け・乱数の種・しきい値の表）を DDR に用意し、AXI DMA が FPGA の回路へ流し込む。回路は読み込み、48 本のレーンで焼きなまし、結果を返す。グラフと塗り分けは回路の中の BRAM に置き、走っている間は外とやりとりしない。">
+<defs><marker id="ah3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" class="ink2f"/></marker></defs>
+<rect x="14" y="30" width="170" height="190" rx="4" class="box"/>
+<text x="26" y="50" class="ink3" font-size="11" text-anchor="start" letter-spacing=".12em">PS</text>
+<text x="99" y="100" class="ink" font-size="13" text-anchor="middle" font-weight="700">ARM Cortex-A9 × 2</text>
+<text x="99" y="122" class="ink2" font-size="11.5" text-anchor="middle">ジョブを作る・照合する</text>
+<rect x="44" y="150" width="110" height="44" rx="3" class="box2"/><text x="99" y="177" class="ink" font-size="13" text-anchor="middle" font-weight="700">DDR3</text>
+<rect x="214" y="16" width="532" height="218" rx="4" class="boxpl"/>
+<text x="228" y="36" class="tri" font-size="11" text-anchor="start" letter-spacing=".12em">FPGA（PL）</text>
+<rect x="232" y="90" width="96" height="70" rx="3" class="box"/><text x="280" y="130" class="ink" font-size="13" text-anchor="middle" font-weight="700">AXI DMA</text>
+<rect x="372" y="54" width="92" height="40" rx="3" class="box"/><text x="418" y="79" class="ink" font-size="12.5" text-anchor="middle">読み込み</text>
+<rect x="490" y="54" width="122" height="142" rx="3" class="boxl"/>
+<rect x="500" y="64" width="92" height="18" rx="2" class="lane"/>
+<rect x="503" y="67" width="92" height="18" rx="2" class="lane"/>
+<rect x="506" y="70" width="92" height="18" rx="2" class="lane"/>
+<rect x="509" y="73" width="92" height="18" rx="2" class="lane"/>
+<rect x="512" y="76" width="92" height="18" rx="2" class="lane"/>
+<text x="551" y="130" class="tri" font-size="14" text-anchor="middle" font-weight="700">レーン × 48</text>
+<text x="551" y="150" class="ink2" font-size="11.5" text-anchor="middle">16 レプリカずつ</text>
+<rect x="372" y="156" width="92" height="40" rx="3" class="box"/><text x="418" y="181" class="ink" font-size="12.5" text-anchor="middle">結果を返す</text>
+<rect x="630" y="70" width="104" height="110" rx="3" class="box2"/>
+<text x="682" y="106" class="ink" font-size="12" text-anchor="middle" font-weight="700">BRAM</text>
+<text x="682" y="128" class="ink2" font-size="11.5" text-anchor="middle">隣接リスト</text>
+<text x="682" y="150" class="ink2" font-size="11.5" text-anchor="middle">塗り分け</text>
+<line x1="154" y1="160" x2="232" y2="118" class="arrow" marker-end="url(#ah3)"/>
+<line x1="328" y1="104" x2="372" y2="76" class="arrow" marker-end="url(#ah3)"/>
+<line x1="464" y1="74" x2="490" y2="74" class="arrow" marker-end="url(#ah3)"/>
+<line x1="490" y1="176" x2="464" y2="176" class="arrow" marker-end="url(#ah3)"/>
+<line x1="372" y1="176" x2="328" y2="142" class="arrow" marker-end="url(#ah3)"/>
+<line x1="232" y1="136" x2="154" y2="182" class="arrow" marker-end="url(#ah3)"/>
+<line x1="612" y1="125" x2="630" y2="125" class="arrow" marker-end="url(#ah3)"/>
+</svg><!--/FIG--></div>
+    <figcaption>
+      <b>全体の構成。</b>ARM がジョブを作り、DMA のストリーム 1 本で回路へ流し込みます。
+      回路は隣接リストと塗り分けを中の BRAM に置き、走っている間は外とやりとりしません。終わったら、結果を同じく 1 本のストリームで返します。
+    </figcaption>
+  </figure>
+
+  <p>
+    1 回の試行でやることは、頂点 v と隣 4 つの色を読む、n<sub>same</sub> を数える、乱数を進めてしきい値と比べる、受け入れなら色とカット値を書く、です。
+    素直に作ると、<b>1 試行ごとにメモリを 5 か所読む</b>のが窮屈になります。ブロック RAM には、1 つにつき読み書きの口が 2 つしかありません。
+    これを 3 つの工夫で解きました。
+  </p>
+
+  <h3>工夫 1：16 レプリカを 1 本のパイプラインに交互に流す</h3>
+  <p>
+    試行の処理を 5 段のパイプラインにし、レプリカ 0, 1, 2, …, 15 の試行を 1 クロックずつ交互に入れます。
+    パイプラインは毎クロック 1 試行を受け付けるので、1 本（<b>レーン</b>）で 1 秒に 1.25 億試行です。
+  </p>
+
+  <figure>
+    <div class="fig-scroll"><!--FIG:pipeline--><svg viewBox="0 0 760 262" role="img" aria-label="5 段のパイプラインに 16 レプリカを交互に流すときの時刻表。各マスの数字はその段にいるレプリカの番号。レプリカ 0 はクロック 0 に S0 に入り、クロック 4 に S4 で結果を書き、次の試行はクロック 16 に S0 に入る。">
+<text x="165.0" y="32" class="ink3" font-size="11" text-anchor="middle" font-family="var(--mono)">0</text>
+<text x="195.0" y="32" class="ink3" font-size="11" text-anchor="middle" font-family="var(--mono)">1</text>
+<text x="225.0" y="32" class="ink3" font-size="11" text-anchor="middle" font-family="var(--mono)">2</text>
+<text x="255.0" y="32" class="ink3" font-size="11" text-anchor="middle" font-family="var(--mono)">3</text>
+<text x="285.0" y="32" class="ink3" font-size="11" text-anchor="middle" font-family="var(--mono)">4</text>
+<text x="315.0" y="32" class="ink3" font-size="11" text-anchor="middle" font-family="var(--mono)">5</text>
+<text x="345.0" y="32" class="ink3" font-size="11" text-anchor="middle" font-family="var(--mono)">6</text>
+<text x="375.0" y="32" class="ink3" font-size="11" text-anchor="middle" font-family="var(--mono)">7</text>
+<text x="405.0" y="32" class="ink3" font-size="11" text-anchor="middle" font-family="var(--mono)">8</text>
+<text x="435.0" y="32" class="ink3" font-size="11" text-anchor="middle" font-family="var(--mono)">9</text>
+<text x="465.0" y="32" class="ink3" font-size="11" text-anchor="middle" font-family="var(--mono)">10</text>
+<text x="495.0" y="32" class="ink3" font-size="11" text-anchor="middle" font-family="var(--mono)">11</text>
+<text x="525.0" y="32" class="ink3" font-size="11" text-anchor="middle" font-family="var(--mono)">12</text>
+<text x="555.0" y="32" class="ink3" font-size="11" text-anchor="middle" font-family="var(--mono)">13</text>
+<text x="585.0" y="32" class="ink3" font-size="11" text-anchor="middle" font-family="var(--mono)">14</text>
+<text x="615.0" y="32" class="ink3" font-size="11" text-anchor="middle" font-family="var(--mono)">15</text>
+<text x="645.0" y="32" class="ink3" font-size="11" text-anchor="middle" font-family="var(--mono)">16</text>
+<text x="675.0" y="32" class="ink3" font-size="11" text-anchor="middle" font-family="var(--mono)">17</text>
+<text x="705.0" y="32" class="ink3" font-size="11" text-anchor="middle" font-family="var(--mono)">18</text>
+<text x="735.0" y="32" class="ink3" font-size="11" text-anchor="middle" font-family="var(--mono)">19</text>
+<text x="140" y="32" class="ink3" font-size="11" text-anchor="end">クロック</text>
+<text x="140" y="64" class="ink2" font-size="12" text-anchor="end">S0 乱数・色を選ぶ</text>
+<rect x="151" y="45" width="28" height="28" rx="2" class="hot"/>
+<text x="165.0" y="64" class="onfill" font-size="11" text-anchor="middle" font-family="var(--mono)">0</text>
+<rect x="181" y="45" width="28" height="28" rx="2" class="warm"/>
+<text x="195.0" y="64" class="ink2" font-size="11" text-anchor="middle" font-family="var(--mono)">1</text>
+<rect x="211" y="45" width="28" height="28" rx="2" class="cell"/>
+<text x="225.0" y="64" class="ink2" font-size="11" text-anchor="middle" font-family="var(--mono)">2</text>
+<rect x="241" y="45" width="28" height="28" rx="2" class="cell"/>
+<text x="255.0" y="64" class="ink2" font-size="11" text-anchor="middle" font-family="var(--mono)">3</text>
+<rect x="271" y="45" width="28" height="28" rx="2" class="cell"/>
+<text x="285.0" y="64" class="ink2" font-size="11" text-anchor="middle" font-family="var(--mono)">4</text>
+<rect x="301" y="45" width="28" height="28" rx="2" class="cell"/>
+<text x="315.0" y="64" class="ink2" font-size="11" text-anchor="middle" font-family="var(--mono)">5</text>
+<rect x="331" y="45" width="28" height="28" rx="2" class="cell"/>
+<text x="345.0" y="64" class="ink2" font-size="11" text-anchor="middle" font-family="var(--mono)">6</text>
+<rect x="361" y="45" width="28" height="28" rx="2" class="cell"/>
+<text x="375.0" y="64" class="ink2" font-size="11" text-anchor="middle" font-family="var(--mono)">7</text>
+<rect x="391" y="45" width="28" height="28" rx="2" class="cell"/>
+<text x="405.0" y="64" class="ink2" font-size="11" text-anchor="middle" font-family="var(--mono)">8</text>
+<rect x="421" y="45" width="28" height="28" rx="2" class="cell"/>
+<text x="435.0" y="64" class="ink2" font-size="11" text-anchor="middle" font-family="var(--mono)">9</text>
+<rect x="451" y="45" width="28" height="28" rx="2" class="cell"/>
+<text x="465.0" y="64" class="ink2" font-size="11" text-anchor="middle" font-family="var(--mono)">10</text>
+<rect x="481" y="45" width="28" height="28" rx="2" class="cell"/>
+<text x="495.0" y="64" class="ink2" font-size="11" text-anchor="middle" font-family="var(--mono)">11</text>
+<rect x="511" y="45" width="28" height="28" rx="2" class="cell"/>
+<text x="525.0" y="64" class="ink2" font-size="11" text-anchor="middle" font-family="var(--mono)">12</text>
+<rect x="541" y="45" width="28" height="28" rx="2" class="cell"/>
+<text x="555.0" y="64" class="ink2" font-size="11" text-anchor="middle" font-family="var(--mono)">13</text>
+<rect x="571" y="45" width="28" height="28" rx="2" class="cell"/>
+<text x="585.0" y="64" class="ink2" font-size="11" text-anchor="middle" font-family="var(--mono)">14</text>
+<rect x="601" y="45" width="28" height="28" rx="2" class="cell"/>
+<text x="615.0" y="64" class="ink2" font-size="11" text-anchor="middle" font-family="var(--mono)">15</text>
+<rect x="631" y="45" width="28" height="28" rx="2" class="hot"/>
+<text x="645.0" y="64" class="onfill" font-size="11" text-anchor="middle" font-family="var(--mono)">0</text>
+<rect x="661" y="45" width="28" height="28" rx="2" class="warm"/>
+<text x="675.0" y="64" class="ink2" font-size="11" text-anchor="middle" font-family="var(--mono)">1</text>
+<rect x="691" y="45" width="28" height="28" rx="2" class="cell"/>
+<text x="705.0" y="64" class="ink2" font-size="11" text-anchor="middle" font-family="var(--mono)">2</text>
+<rect x="721" y="45" width="28" height="28" rx="2" class="cell"/>
+<text x="735.0" y="64" class="ink2" font-size="11" text-anchor="middle" font-family="var(--mono)">3</text>
+<text x="140" y="94" class="ink2" font-size="12" text-anchor="end">S1 数える・比べる</text>
+<rect x="181" y="75" width="28" height="28" rx="2" class="hot"/>
+<text x="195.0" y="94" class="onfill" font-size="11" text-anchor="middle" font-family="var(--mono)">0</text>
+<rect x="211" y="75" width="28" height="28" rx="2" class="warm"/>
+<text x="225.0" y="94" class="ink2" font-size="11" text-anchor="middle" font-family="var(--mono)">1</text>
+<rect x="241" y="75" width="28" height="28" rx="2" class="cell"/>
+<text x="255.0" y="94" class="ink2" font-size="11" text-anchor="middle" font-family="var(--mono)">2</text>
+<rect x="271" y="75" width="28" height="28" rx="2" class="cell"/>
+<text x="285.0" y="94" class="ink2" font-size="11" text-anchor="middle" font-family="var(--mono)">3</text>
+<rect x="301" y="75" width="28" height="28" rx="2" class="cell"/>
+<text x="315.0" y="94" class="ink2" font-size="11" text-anchor="middle" font-family="var(--mono)">4</text>
+<rect x="331" y="75" width="28" height="28" rx="2" class="cell"/>
+<text x="345.0" y="94" class="ink2" font-size="11" text-anchor="middle" font-family="var(--mono)">5</text>
+<rect x="361" y="75" width="28" height="28" rx="2" class="cell"/>
+<text x="375.0" y="94" class="ink2" font-size="11" text-anchor="middle" font-family="var(--mono)">6</text>
+<rect x="391" y="75" width="28" height="28" rx="2" class="cell"/>
+<text x="405.0" y="94" class="ink2" font-size="11" text-anchor="middle" font-family="var(--mono)">7</text>
+<rect x="421" y="75" width="28" height="28" rx="2" class="cell"/>
+<text x="435.0" y="94" class="ink2" font-size="11" text-anchor="middle" font-family="var(--mono)">8</text>
+<rect x="451" y="75" width="28" height="28" rx="2" class="cell"/>
+<text x="465.0" y="94" class="ink2" font-size="11" text-anchor="middle" font-family="var(--mono)">9</text>
+<rect x="481" y="75" width="28" height="28" rx="2" class="cell"/>
+<text x="495.0" y="94" class="ink2" font-size="11" text-anchor="middle" font-family="var(--mono)">10</text>
+<rect x="511" y="75" width="28" height="28" rx="2" class="cell"/>
+<text x="525.0" y="94" class="ink2" font-size="11" text-anchor="middle" font-family="var(--mono)">11</text>
+<rect x="541" y="75" width="28" height="28" rx="2" class="cell"/>
+<text x="555.0" y="94" class="ink2" font-size="11" text-anchor="middle" font-family="var(--mono)">12</text>
+<rect x="571" y="75" width="28" height="28" rx="2" class="cell"/>
+<text x="585.0" y="94" class="ink2" font-size="11" text-anchor="middle" font-family="var(--mono)">13</text>
+<rect x="601" y="75" width="28" height="28" rx="2" class="cell"/>
+<text x="615.0" y="94" class="ink2" font-size="11" text-anchor="middle" font-family="var(--mono)">14</text>
+<rect x="631" y="75" width="28" height="28" rx="2" class="cell"/>
+<text x="645.0" y="94" class="ink2" font-size="11" text-anchor="middle" font-family="var(--mono)">15</text>
+<rect x="661" y="75" width="28" height="28" rx="2" class="hot"/>
+<text x="675.0" y="94" class="onfill" font-size="11" text-anchor="middle" font-family="var(--mono)">0</text>
+<rect x="691" y="75" width="28" height="28" rx="2" class="warm"/>
+<text x="705.0" y="94" class="ink2" font-size="11" text-anchor="middle" font-family="var(--mono)">1</text>
+<rect x="721" y="75" width="28" height="28" rx="2" class="cell"/>
+<text x="735.0" y="94" class="ink2" font-size="11" text-anchor="middle" font-family="var(--mono)">2</text>
+<text x="140" y="124" class="ink2" font-size="12" text-anchor="end">S2 受け入れ・C</text>
+<rect x="211" y="105" width="28" height="28" rx="2" class="hot"/>
+<text x="225.0" y="124" class="onfill" font-size="11" text-anchor="middle" font-family="var(--mono)">0</text>
+<rect x="241" y="105" width="28" height="28" rx="2" class="warm"/>
+<text x="255.0" y="124" class="ink2" font-size="11" text-anchor="middle" font-family="var(--mono)">1</text>
+<rect x="271" y="105" width="28" height="28" rx="2" class="cell"/>
+<text x="285.0" y="124" class="ink2" font-size="11" text-anchor="middle" font-family="var(--mono)">2</text>
+<rect x="301" y="105" width="28" height="28" rx="2" class="cell"/>
+<text x="315.0" y="124" class="ink2" font-size="11" text-anchor="middle" font-family="var(--mono)">3</text>
+<rect x="331" y="105" width="28" height="28" rx="2" class="cell"/>
+<text x="345.0" y="124" class="ink2" font-size="11" text-anchor="middle" font-family="var(--mono)">4</text>
+<rect x="361" y="105" width="28" height="28" rx="2" class="cell"/>
+<text x="375.0" y="124" class="ink2" font-size="11" text-anchor="middle" font-family="var(--mono)">5</text>
+<rect x="391" y="105" width="28" height="28" rx="2" class="cell"/>
+<text x="405.0" y="124" class="ink2" font-size="11" text-anchor="middle" font-family="var(--mono)">6</text>
+<rect x="421" y="105" width="28" height="28" rx="2" class="cell"/>
+<text x="435.0" y="124" class="ink2" font-size="11" text-anchor="middle" font-family="var(--mono)">7</text>
+<rect x="451" y="105" width="28" height="28" rx="2" class="cell"/>
+<text x="465.0" y="124" class="ink2" font-size="11" text-anchor="middle" font-family="var(--mono)">8</text>
+<rect x="481" y="105" width="28" height="28" rx="2" class="cell"/>
+<text x="495.0" y="124" class="ink2" font-size="11" text-anchor="middle" font-family="var(--mono)">9</text>
+<rect x="511" y="105" width="28" height="28" rx="2" class="cell"/>
+<text x="525.0" y="124" class="ink2" font-size="11" text-anchor="middle" font-family="var(--mono)">10</text>
+<rect x="541" y="105" width="28" height="28" rx="2" class="cell"/>
+<text x="555.0" y="124" class="ink2" font-size="11" text-anchor="middle" font-family="var(--mono)">11</text>
+<rect x="571" y="105" width="28" height="28" rx="2" class="cell"/>
+<text x="585.0" y="124" class="ink2" font-size="11" text-anchor="middle" font-family="var(--mono)">12</text>
+<rect x="601" y="105" width="28" height="28" rx="2" class="cell"/>
+<text x="615.0" y="124" class="ink2" font-size="11" text-anchor="middle" font-family="var(--mono)">13</text>
+<rect x="631" y="105" width="28" height="28" rx="2" class="cell"/>
+<text x="645.0" y="124" class="ink2" font-size="11" text-anchor="middle" font-family="var(--mono)">14</text>
+<rect x="661" y="105" width="28" height="28" rx="2" class="cell"/>
+<text x="675.0" y="124" class="ink2" font-size="11" text-anchor="middle" font-family="var(--mono)">15</text>
+<rect x="691" y="105" width="28" height="28" rx="2" class="hot"/>
+<text x="705.0" y="124" class="onfill" font-size="11" text-anchor="middle" font-family="var(--mono)">0</text>
+<rect x="721" y="105" width="28" height="28" rx="2" class="warm"/>
+<text x="735.0" y="124" class="ink2" font-size="11" text-anchor="middle" font-family="var(--mono)">1</text>
+<text x="140" y="154" class="ink2" font-size="12" text-anchor="end">S3 反転・最良と比較</text>
+<rect x="241" y="135" width="28" height="28" rx="2" class="hot"/>
+<text x="255.0" y="154" class="onfill" font-size="11" text-anchor="middle" font-family="var(--mono)">0</text>
+<rect x="271" y="135" width="28" height="28" rx="2" class="warm"/>
+<text x="285.0" y="154" class="ink2" font-size="11" text-anchor="middle" font-family="var(--mono)">1</text>
+<rect x="301" y="135" width="28" height="28" rx="2" class="cell"/>
+<text x="315.0" y="154" class="ink2" font-size="11" text-anchor="middle" font-family="var(--mono)">2</text>
+<rect x="331" y="135" width="28" height="28" rx="2" class="cell"/>
+<text x="345.0" y="154" class="ink2" font-size="11" text-anchor="middle" font-family="var(--mono)">3</text>
+<rect x="361" y="135" width="28" height="28" rx="2" class="cell"/>
+<text x="375.0" y="154" class="ink2" font-size="11" text-anchor="middle" font-family="var(--mono)">4</text>
+<rect x="391" y="135" width="28" height="28" rx="2" class="cell"/>
+<text x="405.0" y="154" class="ink2" font-size="11" text-anchor="middle" font-family="var(--mono)">5</text>
+<rect x="421" y="135" width="28" height="28" rx="2" class="cell"/>
+<text x="435.0" y="154" class="ink2" font-size="11" text-anchor="middle" font-family="var(--mono)">6</text>
+<rect x="451" y="135" width="28" height="28" rx="2" class="cell"/>
+<text x="465.0" y="154" class="ink2" font-size="11" text-anchor="middle" font-family="var(--mono)">7</text>
+<rect x="481" y="135" width="28" height="28" rx="2" class="cell"/>
+<text x="495.0" y="154" class="ink2" font-size="11" text-anchor="middle" font-family="var(--mono)">8</text>
+<rect x="511" y="135" width="28" height="28" rx="2" class="cell"/>
+<text x="525.0" y="154" class="ink2" font-size="11" text-anchor="middle" font-family="var(--mono)">9</text>
+<rect x="541" y="135" width="28" height="28" rx="2" class="cell"/>
+<text x="555.0" y="154" class="ink2" font-size="11" text-anchor="middle" font-family="var(--mono)">10</text>
+<rect x="571" y="135" width="28" height="28" rx="2" class="cell"/>
+<text x="585.0" y="154" class="ink2" font-size="11" text-anchor="middle" font-family="var(--mono)">11</text>
+<rect x="601" y="135" width="28" height="28" rx="2" class="cell"/>
+<text x="615.0" y="154" class="ink2" font-size="11" text-anchor="middle" font-family="var(--mono)">12</text>
+<rect x="631" y="135" width="28" height="28" rx="2" class="cell"/>
+<text x="645.0" y="154" class="ink2" font-size="11" text-anchor="middle" font-family="var(--mono)">13</text>
+<rect x="661" y="135" width="28" height="28" rx="2" class="cell"/>
+<text x="675.0" y="154" class="ink2" font-size="11" text-anchor="middle" font-family="var(--mono)">14</text>
+<rect x="691" y="135" width="28" height="28" rx="2" class="cell"/>
+<text x="705.0" y="154" class="ink2" font-size="11" text-anchor="middle" font-family="var(--mono)">15</text>
+<rect x="721" y="135" width="28" height="28" rx="2" class="hot"/>
+<text x="735.0" y="154" class="onfill" font-size="11" text-anchor="middle" font-family="var(--mono)">0</text>
+<text x="140" y="184" class="ink2" font-size="12" text-anchor="end">S4 記録</text>
+<rect x="271" y="165" width="28" height="28" rx="2" class="hot"/>
+<text x="285.0" y="184" class="onfill" font-size="11" text-anchor="middle" font-family="var(--mono)">0</text>
+<rect x="301" y="165" width="28" height="28" rx="2" class="warm"/>
+<text x="315.0" y="184" class="ink2" font-size="11" text-anchor="middle" font-family="var(--mono)">1</text>
+<rect x="331" y="165" width="28" height="28" rx="2" class="cell"/>
+<text x="345.0" y="184" class="ink2" font-size="11" text-anchor="middle" font-family="var(--mono)">2</text>
+<rect x="361" y="165" width="28" height="28" rx="2" class="cell"/>
+<text x="375.0" y="184" class="ink2" font-size="11" text-anchor="middle" font-family="var(--mono)">3</text>
+<rect x="391" y="165" width="28" height="28" rx="2" class="cell"/>
+<text x="405.0" y="184" class="ink2" font-size="11" text-anchor="middle" font-family="var(--mono)">4</text>
+<rect x="421" y="165" width="28" height="28" rx="2" class="cell"/>
+<text x="435.0" y="184" class="ink2" font-size="11" text-anchor="middle" font-family="var(--mono)">5</text>
+<rect x="451" y="165" width="28" height="28" rx="2" class="cell"/>
+<text x="465.0" y="184" class="ink2" font-size="11" text-anchor="middle" font-family="var(--mono)">6</text>
+<rect x="481" y="165" width="28" height="28" rx="2" class="cell"/>
+<text x="495.0" y="184" class="ink2" font-size="11" text-anchor="middle" font-family="var(--mono)">7</text>
+<rect x="511" y="165" width="28" height="28" rx="2" class="cell"/>
+<text x="525.0" y="184" class="ink2" font-size="11" text-anchor="middle" font-family="var(--mono)">8</text>
+<rect x="541" y="165" width="28" height="28" rx="2" class="cell"/>
+<text x="555.0" y="184" class="ink2" font-size="11" text-anchor="middle" font-family="var(--mono)">9</text>
+<rect x="571" y="165" width="28" height="28" rx="2" class="cell"/>
+<text x="585.0" y="184" class="ink2" font-size="11" text-anchor="middle" font-family="var(--mono)">10</text>
+<rect x="601" y="165" width="28" height="28" rx="2" class="cell"/>
+<text x="615.0" y="184" class="ink2" font-size="11" text-anchor="middle" font-family="var(--mono)">11</text>
+<rect x="631" y="165" width="28" height="28" rx="2" class="cell"/>
+<text x="645.0" y="184" class="ink2" font-size="11" text-anchor="middle" font-family="var(--mono)">12</text>
+<rect x="661" y="165" width="28" height="28" rx="2" class="cell"/>
+<text x="675.0" y="184" class="ink2" font-size="11" text-anchor="middle" font-family="var(--mono)">13</text>
+<rect x="691" y="165" width="28" height="28" rx="2" class="cell"/>
+<text x="705.0" y="184" class="ink2" font-size="11" text-anchor="middle" font-family="var(--mono)">14</text>
+<rect x="721" y="165" width="28" height="28" rx="2" class="cell"/>
+<text x="735.0" y="184" class="ink2" font-size="11" text-anchor="middle" font-family="var(--mono)">15</text>
+<path d="M285.0,198 L285.0,212 L645.0,212 L645.0,198" class="loop"/>
+<text x="465.0" y="234" class="path" font-size="12.5" text-anchor="middle" font-weight="700">同じレプリカの次の試行は 16 クロック後</text>
+<text x="285.0" y="234" class="ink3" font-size="11" text-anchor="middle">4: S4 で書く</text>
+<text x="645.0" y="234" class="ink3" font-size="11" text-anchor="middle">16: S0 で読む</text>
+</svg><!--/FIG--></div>
+    <figcaption>
+      <b>同じレプリカの次の試行は 16 クロック後。</b>レプリカ 0（濃い色）はクロック 4 で結果を書き終え、次にクロック 16 で読みに来ます。
+      どのレプリカでも、自分の書き込みが次の読み出しより必ず先に終わります。
+      パイプラインで起きがちな「書く前に読んでしまう」衝突が、形のうえで起こりません。
+    </figcaption>
+  </figure>
+
+  <h3>工夫 2：全レプリカが同じ頂点を処理し、色を頂点ごとの語で持つ</h3>
+  <p>
+    頂点は順に回すと決めたので、16 クロックの間、全レプリカが同じ頂点 v を処理します。この 16 クロックを<b>窓</b>と呼びます。
+    窓の間、v の隣の色は変わりません（変わるのは v だけで、自分自身とはつながっていないため）。
+  </p>
+  <p>
+    そこで塗り分けを、<b>頂点ごとに「全レプリカぶんの色を並べた語」</b>として BRAM に持ちます。ビット p がレプリカ p の色です。
+    すると、隣の色は窓の始めに語を 4 つ読むだけで全レプリカぶんがそろいます。読み出しは 16 クロックに数回で、
+    レーンを何本に増やしても語の幅が広がるだけなので、<b>BRAM の口 1 つで足ります</b>。
+  </p>
+
+  <figure>
+    <div class="fig-scroll"><!--FIG:window--><svg viewBox="0 0 760 360" role="img" aria-label="上: 頂点ごとの語。ビット p がレプリカ p の色で、レーン 0 はビット 0〜15、レーン 47 はビット 752〜767 を使う。下: 窓の中の時刻表。16 クロックの間、全レーンが頂点 v を試行する。並行して、時刻 0 に v+1 の隣の番号を読み、時刻 3 に v−1 の語を書き戻し、時刻 4〜8 に v+1 の隣の語と v+1 の語を読み、時刻 7〜11 に受け取る。時刻 15 で入れ替える。">
+<text x="204" y="42" class="ink2" font-size="12" text-anchor="end">頂点 u の語（BRAM の 1 行）</text>
+<text x="204" y="60" class="ink3" font-size="11.5" text-anchor="end">ビット p = レプリカ p の色</text>
+<rect x="215" y="30" width="18" height="26" rx="2" class="v0"/>
+<rect x="235" y="30" width="18" height="26" rx="2" class="v1"/>
+<rect x="255" y="30" width="18" height="26" rx="2" class="v0"/>
+<rect x="275" y="30" width="18" height="26" rx="2" class="v0"/>
+<rect x="295" y="30" width="18" height="26" rx="2" class="v1"/>
+<rect x="315" y="30" width="18" height="26" rx="2" class="v0"/>
+<rect x="335" y="30" width="18" height="26" rx="2" class="v1"/>
+<rect x="355" y="30" width="18" height="26" rx="2" class="v0"/>
+<rect x="375" y="30" width="18" height="26" rx="2" class="v0"/>
+<rect x="395" y="30" width="18" height="26" rx="2" class="v1"/>
+<rect x="415" y="30" width="18" height="26" rx="2" class="v0"/>
+<rect x="435" y="30" width="18" height="26" rx="2" class="v1"/>
+<rect x="455" y="30" width="18" height="26" rx="2" class="v0"/>
+<rect x="475" y="30" width="18" height="26" rx="2" class="v0"/>
+<rect x="495" y="30" width="18" height="26" rx="2" class="v1"/>
+<text x="524.0" y="48" class="ink3" font-size="13" text-anchor="middle">…</text>
+<rect x="535" y="30" width="18" height="26" rx="2" class="v1"/>
+<rect x="555" y="30" width="18" height="26" rx="2" class="v0"/>
+<rect x="575" y="30" width="18" height="26" rx="2" class="v0"/>
+<rect x="595" y="30" width="18" height="26" rx="2" class="v1"/>
+<rect x="615" y="30" width="18" height="26" rx="2" class="v0"/>
+<rect x="635" y="30" width="18" height="26" rx="2" class="v1"/>
+<line x1="214" y1="66" x2="512" y2="66" class="brace"/><text x="364.0" y="82" class="ink3" font-size="11.5" text-anchor="middle">レーン 0（ビット 0〜15）</text>
+<line x1="536" y1="66" x2="654" y2="66" class="brace"/><text x="594" y="82" class="ink3" font-size="11.5" text-anchor="middle">… レーン 47（752〜767）</text>
+<text x="246.0" y="118" class="ink3" font-size="11" text-anchor="middle" font-family="var(--mono)">0</text>
+<text x="278.0" y="118" class="ink3" font-size="11" text-anchor="middle" font-family="var(--mono)">1</text>
+<text x="310.0" y="118" class="ink3" font-size="11" text-anchor="middle" font-family="var(--mono)">2</text>
+<text x="342.0" y="118" class="ink3" font-size="11" text-anchor="middle" font-family="var(--mono)">3</text>
+<text x="374.0" y="118" class="ink3" font-size="11" text-anchor="middle" font-family="var(--mono)">4</text>
+<text x="406.0" y="118" class="ink3" font-size="11" text-anchor="middle" font-family="var(--mono)">5</text>
+<text x="438.0" y="118" class="ink3" font-size="11" text-anchor="middle" font-family="var(--mono)">6</text>
+<text x="470.0" y="118" class="ink3" font-size="11" text-anchor="middle" font-family="var(--mono)">7</text>
+<text x="502.0" y="118" class="ink3" font-size="11" text-anchor="middle" font-family="var(--mono)">8</text>
+<text x="534.0" y="118" class="ink3" font-size="11" text-anchor="middle" font-family="var(--mono)">9</text>
+<text x="566.0" y="118" class="ink3" font-size="11" text-anchor="middle" font-family="var(--mono)">10</text>
+<text x="598.0" y="118" class="ink3" font-size="11" text-anchor="middle" font-family="var(--mono)">11</text>
+<text x="630.0" y="118" class="ink3" font-size="11" text-anchor="middle" font-family="var(--mono)">12</text>
+<text x="662.0" y="118" class="ink3" font-size="11" text-anchor="middle" font-family="var(--mono)">13</text>
+<text x="694.0" y="118" class="ink3" font-size="11" text-anchor="middle" font-family="var(--mono)">14</text>
+<text x="726.0" y="118" class="ink3" font-size="11" text-anchor="middle" font-family="var(--mono)">15</text>
+<text x="220" y="118" class="ink3" font-size="11" text-anchor="end">窓の中の時刻 o</text>
+<text x="220" y="149" class="ink2" font-size="11.5" text-anchor="end">全レーンが頂点 v を試行</text>
+<rect x="231" y="133" width="510" height="24" rx="3" class="bar-tri"/>
+<text x="220" y="183" class="ink2" font-size="11.5" text-anchor="end">ADJ から v+1 の隣の番号</text>
+<rect x="231" y="167" width="30" height="24" rx="3" class="bar-path"/>
+<text x="220" y="217" class="ink2" font-size="11.5" text-anchor="end">v−1 の語を書き戻す</text>
+<rect x="327" y="201" width="62" height="24" rx="3" class="bar-ddr"/>
+<text x="220" y="251" class="ink2" font-size="11.5" text-anchor="end">v+1 の隣 4 語と v+1 の語を読む</text>
+<rect x="359" y="235" width="158" height="24" rx="3" class="bar-path"/>
+<text x="220" y="285" class="ink2" font-size="11.5" text-anchor="end">受け取る（隣が v ならレジスタから）</text>
+<rect x="455" y="269" width="158" height="24" rx="3" class="bar-path"/>
+<line x1="742" y1="128" x2="742" y2="302" class="edge"/>
+<text x="738" y="320" class="ink2" font-size="11.5" text-anchor="end">境目で入れ替え →</text>
+</svg><!--/FIG--></div>
+    <figcaption>
+      <b>窓の間に、次の窓の準備をする。</b>頂点 v を試行している 16 クロックの間に、次の頂点 v+1 の隣の語を BRAM から先読みしておきます。
+      v+1 の隣に v 自身がいることがあります。そのときは v の色がまだ書き換え中なので、BRAM ではなく書き換え中のレジスタから直接取ります（フォワーディング）。
+      1 つ前の v−1 は、読む前に書き戻しておきます。
+    </figcaption>
+  </figure>
+
+  <h3>工夫 3：レプリカごとの状態は LUT のメモリに、exp は表の比較に</h3>
+  <p>
+    乱数の状態（64 bit）、カット値、最良値と、それが出た試行番号は、レプリカごとに LUT を小さなメモリとして使う LUTRAM に置きます。
+    受け入れの判定は、32 bit の比較器 2 つ（n<sub>same</sub> = 0 と 1 の場合）と、小さな論理だけで済みます。
+  </p>
+
+  <h3>確かめ方</h3>
+  <ul>
+    <li><b>シミュレーション</b>：ジョブを 4 つ続けて流し、入力にランダムな途切れを、出力に背圧をかけます。返ってくる全語（各レプリカの最良値・試行番号・最後の塗り分けなど）が CPU 版と一致することを、レーン数 1・2・4・8・48 で確かめました。</li>
+    <li><b>わざと壊す</b>：フォワーディングを切る、書き戻しを 1 クロック遅らせる、先読みの受け取りを 1 クロック早める。この 3 つは、ちゃんと不一致になります。試験が誤りを見逃していないことの確認です。</li>
+    <li><b>実機</b>：ボード上で CPU 版が期待値を作り、回路の出力の全語と照合します。レーン数 1・2・4・8・16・32・48 のすべてで一致しました。</li>
+  </ul>
+
+  <h3>何本並べられるか</h3>
+  <p>レーンを増やすと、1 クロックにそのレーン数だけ試行できます。XC7Z020 に入るだけ並べました（125 MHz、資源は DMA なども含む全体）。</p>
+
+  <div class="tbl-scroll">
+  <table>
+    <thead><tr><th>レーン</th><th>レプリカ</th><th>LUT</th><th>BRAM</th><th>タイミングの余裕</th><th>試行/秒（実機）</th></tr></thead>
+    <tbody>
+      <tr><td>1</td><td>16</td><td>6,172</td><td>16.5</td><td>+0.196 ns</td><td>1.25 × 10<sup>8</sup></td></tr>
+      <tr><td>8</td><td>128</td><td>11,352</td><td>29</td><td>+0.294 ns</td><td>1.00 × 10<sup>9</sup></td></tr>
+      <tr><td>16</td><td>256</td><td>17,318</td><td>43</td><td>+0.070 ns</td><td>2.00 × 10<sup>9</sup></td></tr>
+      <tr><td>32</td><td>512</td><td>31,395</td><td>71.5</td><td>+0.285 ns</td><td>4.00 × 10<sup>9</sup></td></tr>
+      <tr class="hit"><td><strong>48</strong></td><td>768</td><td>44,652（84%）</td><td>100</td><td>+0.124 ns</td><td><strong>6.00 × 10<sup>9</sup></strong></td></tr>
+      <tr><td>64</td><td>1,024</td><td colspan="4" class="t">配置に失敗（Slice が足りない）</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <div class="callout fix">
+    <span class="label">詰まった順番</span>
+    <p>
+      48 レーンで最初にタイミングが通らなくなりました。原因は焼きなましの演算ではなく、読み込み用の制御信号を全レーンに配る配線の混雑です。
+      その信号を各レーンで 1 段レジスタに受けると通りました。64 レーンでは、回路を置く場所（Slice）そのものが足りなくなりました。
+      1 レーンは LUT を約 600 個使い、その 4 割ほどがレプリカごとの状態を持つ LUTRAM です。
+    </p>
+  </div>
+</section>
+
+<!-- ============================================================ -->
+<section id="s5">
+  <h2><span class="n">05</span><span>結果：速さでは M4 に負ける</span></h2>
+  <p class="sub">same algorithm, same results, different speed</p>
+
+  <p>
+    比べる相手は、同じアルゴリズムを CPU 向けにできるだけ速くした版（<code>sa_fast.c</code>）です。結果は回路とビット単位で同じです。
+    n = 1024 の 4 正則グラフ、標準のスケジュールで、1 秒あたりの試行回数を比べます。
+  </p>
+
+  <figure>
+    <div class="fig-scroll"><!--FIG:bars--><svg viewBox="0 0 760 290" role="img" aria-label="1 秒あたりの試行回数（対数目盛り）。Cortex-A9 × 2 の未最適化版 1.95 × 10^7、Cortex-A9 × 2 の sa_fast 1.12 × 10^8、FPGA 1 レーン 1.25 × 10^8、M4 10 コアの未最適化版 2.32 × 10^9、FPGA 48 レーン 6.0 × 10^9、M4 10 コアの sa_fast 2.98 × 10^10。">
+<line x1="250.0" y1="20" x2="250.0" y2="242" class="grid"/>
+<text x="250.0" y="260" class="ink3" font-size="11" text-anchor="middle" font-family="var(--mono)">10<tspan dy="-5" font-size="8">7</tspan></text>
+<line x1="367.5" y1="20" x2="367.5" y2="242" class="grid"/>
+<text x="367.5" y="260" class="ink3" font-size="11" text-anchor="middle" font-family="var(--mono)">10<tspan dy="-5" font-size="8">8</tspan></text>
+<line x1="485.0" y1="20" x2="485.0" y2="242" class="grid"/>
+<text x="485.0" y="260" class="ink3" font-size="11" text-anchor="middle" font-family="var(--mono)">10<tspan dy="-5" font-size="8">9</tspan></text>
+<line x1="602.5" y1="20" x2="602.5" y2="242" class="grid"/>
+<text x="602.5" y="260" class="ink3" font-size="11" text-anchor="middle" font-family="var(--mono)">10<tspan dy="-5" font-size="8">10</tspan></text>
+<line x1="720.0" y1="20" x2="720.0" y2="242" class="grid"/>
+<text x="720.0" y="260" class="ink3" font-size="11" text-anchor="middle" font-family="var(--mono)">10<tspan dy="-5" font-size="8">11</tspan></text>
+<text x="240" y="48" class="ink2" font-size="12.5" text-anchor="end">Cortex-A9 × 2 · sa（未最適化）</text>
+<rect x="250" y="33" width="34.1" height="22" rx="2" class="b-cpu"/>
+<text x="292.1" y="48" class="ink2" font-size="11.5" font-family="var(--mono)">1.95 × 10<tspan dy="-5" font-size="8">7</tspan></text>
+<text x="240" y="84" class="ink2" font-size="12.5" text-anchor="end">Cortex-A9 × 2 · sa_fast</text>
+<rect x="250" y="69" width="123.3" height="22" rx="2" class="b-cpu"/>
+<text x="381.3" y="84" class="ink2" font-size="11.5" font-family="var(--mono)">1.12 × 10<tspan dy="-5" font-size="8">8</tspan></text>
+<text x="240" y="120" class="ink" font-size="12.5" text-anchor="end" font-weight="700">FPGA · 1 レーン</text>
+<rect x="250" y="105" width="128.9" height="22" rx="2" class="b-fpga"/>
+<text x="386.9" y="120" class="ink2" font-size="11.5" font-family="var(--mono)">1.25 × 10<tspan dy="-5" font-size="8">8</tspan></text>
+<text x="240" y="156" class="ink2" font-size="12.5" text-anchor="end">M4 · 10 コア · sa（未最適化）</text>
+<rect x="250" y="141" width="277.9" height="22" rx="2" class="b-cpu"/>
+<text x="535.9" y="156" class="ink2" font-size="11.5" font-family="var(--mono)">2.32 × 10<tspan dy="-5" font-size="8">9</tspan></text>
+<text x="240" y="192" class="ink" font-size="12.5" text-anchor="end" font-weight="700">FPGA · 48 レーン</text>
+<rect x="250" y="177" width="326.4" height="22" rx="2" class="b-fpga"/>
+<text x="584.4" y="192" class="ink2" font-size="11.5" font-family="var(--mono)">6.00 × 10<tspan dy="-5" font-size="8">9</tspan></text>
+<text x="240" y="228" class="ink2" font-size="12.5" text-anchor="end">M4 · 10 コア · sa_fast</text>
+<rect x="250" y="213" width="408.2" height="22" rx="2" class="b-cpu"/>
+<text x="666.2" y="228" class="ink2" font-size="11.5" font-family="var(--mono)">2.98 × 10<tspan dy="-5" font-size="8">10</tspan></text>
+<text x="485.0" y="282" class="ink3" font-size="11.5" text-anchor="middle">試行/秒（対数目盛り）</text>
+</svg><!--/FIG--></div>
+    <figcaption>
+      <b>1 秒あたりの試行回数（対数目盛り、すべて実測）。</b>FPGA の 48 レーンは、同じボードの ARM（2 コア、最適化版）の 54 倍速く、
+      M4 の Mac mini（10 コア、最適化版）の 5 分の 1 です。どれも同じ探索をするので、目標に届くまでの時間の比もこのとおりです。
+    </figcaption>
+  </figure>
+
+  <p class="keyline">同じボードの CPU には 54 倍勝ち、最新の CPU には 5 倍負ける。</p>
+
+  <p>
+    M4 が速い理由は<b>ビットスライス</b>です。128 レプリカの乱数の状態を並べ替えて、「64 bit の状態のビット b を、128 レプリカぶん集めた 128 bit の語」を 64 本持ちます。
+    すると xorshift64 のシフトと XOR は、語どうしの XOR になります。1 命令で 128 レプリカぶんの乱数が進むわけです。
+    受け入れの比較（r &lt; TH）も、語のまま上の桁から順に決められます。
+    一方の FPGA は、1 レーン（LUT 約 600 個）で 1 クロックに 1 試行です。2012 年の 28 nm の小さな FPGA と、2024 年の 3 nm の CPU の比較でもあります。
+    125 MHz のまま M4 に並ぶには、約 240 レーンが要る計算です（試算）。
+  </p>
+  <p>
+    これからは次のことを確かめます。
+  </p>
+  <ul>
+    <li><b>電力あたりの比較</b>。ボードは数 W、Mac mini は負荷時に数十 W です。電力あたりでは結果が変わるかもしれません（まだ測っていません）。</li>
+    <li>ベンチマーク集 G-set のトーラス状のグラフ（G48〜G50）で、到達時間を比べる。</li>
+    <li>レプリカ交換法。しきい値の表の割り当てを入れ替えるだけで足せます。</li>
+  </ul>
+</section>
+
+<section>
+  <h2><span class="n">—</span><span>参考文献</span></h2>
+  <ul class="refs">
+    <li>R. M. Karp, “Reducibility among combinatorial problems,” 1972.</li>
+    <li>J. Håstad, “Some optimal inapproximability results,” <i>J. ACM</i> 48(4), 2001.</li>
+    <li>M. X. Goemans, D. P. Williamson, “Improved approximation algorithms for maximum cut and satisfiability problems using semidefinite programming,” <i>J. ACM</i> 42(6), 1995.</li>
+    <li>S. Khot, G. Kindler, E. Mossel, R. O’Donnell, “Optimal inapproximability results for MAX-CUT and other 2-variable CSPs?,” <i>SIAM J. Comput.</i> 37(1), 2007.</li>
+    <li>N. Metropolis ほか, “Equation of state calculations by fast computing machines,” <i>J. Chem. Phys.</i> 21, 1953.</li>
+    <li>S. Kirkpatrick, C. D. Gelatt, M. P. Vecchi, “Optimization by simulated annealing,” <i>Science</i> 220, 1983.</li>
+    <li>S. Burer, R. D. C. Monteiro, Y. Zhang, “Rank-two relaxation heuristics for MAX-CUT and other binary quadratic programs,” <i>SIAM J. Optim.</i> 12(2), 2002.</li>
+    <li>U. Benlic, J.-K. Hao, “Breakout local search for the max-cut problem,” <i>Eng. Appl. Artif. Intell.</i> 26(3), 2013.</li>
+    <li>C. Helmberg, F. Rendl, “A spectral bundle method for semidefinite programming,” <i>SIAM J. Optim.</i> 10(3), 2000.（G-set）</li>
+    <li>G. Marsaglia, “Xorshift RNGs,” <i>J. Stat. Softw.</i> 8(14), 2003.</li>
+    <li>T. Inagaki ほか, “A coherent Ising machine for 2000-node optimization problems,” <i>Science</i> 354, 2016.</li>
+    <li>M. Aramon ほか, “Physics-inspired optimization for quadratic unconstrained problems using a digital annealer,” <i>Front. Phys.</i> 7, 2019.</li>
+    <li>H. Goto, K. Tatsumura, A. R. Dixon, “Combinatorial optimization by simulating adiabatic bifurcations in nonlinear Hamiltonian systems,” <i>Sci. Adv.</i> 5, 2019.</li>
+  </ul>
+</section>
+
+<footer>
+  <p>
+    実装・測定の記録・試し方: <a href="https://github.com/tsjshg/fpga-max-cut">github.com/tsjshg/fpga-max-cut</a>。
+    回路を焼くまでの道具: <a href="https://github.com/tsjshg/fpga-mac">fpga-mac</a>。
+    前のプロジェクト（PYNQ-Z1 で三値の言語モデル）: <a href="https://tsjshg.github.io/fpga-pynq-z1/">開発記録</a>。
+  </p>
+  <p>2026-10-10 · BSD 3-Clause</p>
+</footer>
+
+</div>
+</body>
+</html>

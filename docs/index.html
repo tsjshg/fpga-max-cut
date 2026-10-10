@@ -1,0 +1,206 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>fpga-max-cut</title>
+<meta name="description" content="Max-Cut by simulated annealing on a PYNQ-Z1 FPGA: an explainer in English and Japanese.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Shippori+Mincho+B1:wght@700&family=Zen+Kaku+Gothic+New:wght@400;500;700&family=M+PLUS+1+Code:wght@400;500;700&display=swap">
+<style>
+  :root{
+    --paper:#F4F6F7; --card:#FFFFFF;
+    --ink:#1A2027; --ink-2:#5C666F; --ink-3:#8B959D;
+    --rule:#D9DFE3; --rule-2:#EAEEF0;
+    --path:#1F5FA9; --path-soft:#E4EDF7;   /* 色 0・データの流れ */
+    --ddr:#C0701A;  --ddr-soft:#F9EEE1;    /* 色 1・メモリ */
+    --tri:#136B57;  --tri-soft:#DFF0EA;    /* FPGA */
+    --attn:#6B4FA0; --attn-soft:#EDE7F6;
+    --cpu:#77818A; --onfill:#FFFFFF;
+    --wrong:#A33A3A; --wrong-soft:#F7E9E9;
+    --serif:"Shippori Mincho B1",'Hiragino Mincho ProN',"Yu Mincho",serif;
+    --sans:"Zen Kaku Gothic New",'Hiragino Sans',"Yu Gothic",system-ui,sans-serif;
+    --mono:"M PLUS 1 Code",ui-monospace,"SFMono-Regular",Menlo,monospace;
+  }
+  @media (prefers-color-scheme: dark){
+    :root:not([data-theme="light"]){
+      color-scheme:dark;
+      --paper:#14181C; --card:#1B2126; --ink:#E6EAED; --ink-2:#A3ADB5; --ink-3:#727C84;
+      --rule:#2E363D; --rule-2:#232A30;
+      --path:#6FA8E8; --path-soft:#1C2A3A;
+      --ddr:#E0A05B;  --ddr-soft:#332617;
+      --tri:#5CC4A7;  --tri-soft:#12302A;
+      --attn:#B49BE8; --attn-soft:#261E3A;
+      --cpu:#8F9AA3; --onfill:#0F1418;
+      --wrong:#DF8C8C; --wrong-soft:#33201F;
+    }
+  }
+  :root[data-theme="dark"]{
+    color-scheme:dark;
+    --paper:#14181C; --card:#1B2126; --ink:#E6EAED; --ink-2:#A3ADB5; --ink-3:#727C84;
+    --rule:#2E363D; --rule-2:#232A30;
+    --path:#6FA8E8; --path-soft:#1C2A3A;
+    --ddr:#E0A05B;  --ddr-soft:#332617;
+    --tri:#5CC4A7;  --tri-soft:#12302A;
+    --attn:#B49BE8; --attn-soft:#261E3A;
+    --cpu:#8F9AA3; --onfill:#0F1418;
+    --wrong:#DF8C8C; --wrong-soft:#33201F;
+  }
+
+  *{box-sizing:border-box}
+  body{
+    margin:0;background:var(--paper); color:var(--ink); font-family:var(--sans);
+    font-size:16px; line-height:1.9; -webkit-font-smoothing:antialiased;
+  }
+  .wrap{max-width:760px;margin:0 auto;padding:0 16px 96px;}
+  @media (min-width:600px){ .wrap{padding:0 24px 96px;} }
+
+  .jnav{max-width:760px;margin:0 auto;padding:14px 16px 0;display:flex;flex-wrap:wrap;
+        gap:4px 18px;font-size:12.5px;line-height:1.7;opacity:.8}
+  .jnav a{color:inherit;text-underline-offset:3px;text-decoration-thickness:1px}
+  .jnav .lang{margin-left:auto}
+  @media (min-width:600px){ .jnav{padding:14px 24px 0} }
+
+  header{padding:56px 0 40px;border-bottom:1px solid var(--rule);}
+  .eyebrow{
+    font-family:var(--mono);font-size:11px;letter-spacing:.18em;
+    color:var(--ink-3);text-transform:uppercase;margin-bottom:20px;
+  }
+  h1{
+    font-family:var(--serif);font-weight:700;
+    font-size:clamp(34px,6.6vw,54px);line-height:1.25;
+    margin:0 0 20px;text-wrap:balance;letter-spacing:.01em;
+  }
+  .standfirst{font-size:17px;color:var(--ink-2);margin:0 0 14px;max-width:60ch;}
+  .toc{margin:28px 0 0;padding:14px 0 0;border-top:1px solid var(--rule-2);font-size:14px;color:var(--ink-2);}
+  .toc ol{margin:0;padding-left:1.6em;}
+  .toc li{margin:0;}
+  .toc a{color:inherit;}
+
+  section{margin-top:60px;}
+  h2{
+    font-family:var(--serif);font-weight:700;font-size:clamp(21px,4.4vw,26px);line-height:1.5;
+    margin:0 0 8px;display:flex;gap:16px;align-items:baseline;text-wrap:balance;
+  }
+  h2 .n{font-family:var(--mono);font-size:13px;font-weight:700;color:var(--path);flex:none;padding-top:2px;}
+  h2 + .sub{font-family:var(--mono);font-size:12px;color:var(--ink-3);margin:0 0 24px 39px;letter-spacing:.04em;}
+  h3{font-size:17px;font-weight:700;margin:36px 0 10px;}
+  p{margin:0 0 18px;}
+
+  figure{
+    margin:34px 0;background:var(--card);border:1px solid var(--rule);
+    border-radius:3px;padding:22px 16px 16px;
+  }
+  @media (min-width:600px){ figure{padding:26px 22px 18px;} }
+  .fig-scroll{overflow-x:auto;}
+  figure svg{display:block;width:100%;min-width:560px;height:auto;}
+  figure svg text{font-family:var(--sans);}
+  figcaption{
+    margin-top:18px;padding-top:14px;border-top:1px solid var(--rule-2);
+    font-size:13px;line-height:1.75;color:var(--ink-2);
+  }
+  figcaption b{color:var(--ink);font-weight:700;}
+
+  /* 図の部品 */
+  .ink{fill:var(--ink)} .ink2{fill:var(--ink-2)} .ink3{fill:var(--ink-3)} .onfill{fill:var(--onfill)}
+  .path{fill:var(--path)} .tri{fill:var(--tri)}
+  .v0{fill:var(--path)} .v1{fill:var(--ddr)}
+  .cut{stroke:var(--ink);stroke-width:3} .uncut{stroke:var(--ink-3);stroke-width:1.5;stroke-dasharray:5 5}
+  .arrow{stroke:var(--ink-2);stroke-width:1.5;fill:none} .ink2f{fill:var(--ink-2)} .pathf{fill:var(--path)}
+  .hot{fill:var(--path)} .warm{fill:var(--path-soft)} .cell{fill:var(--rule-2)}
+  .loop{stroke:var(--path);stroke-width:1.5;fill:none} .brace{stroke:var(--ink-3);stroke-width:1}
+  .bar-tri{fill:var(--tri-soft);stroke:var(--tri)} .bar-path{fill:var(--path-soft);stroke:var(--path)}
+  .bar-ddr{fill:var(--ddr-soft);stroke:var(--ddr)} .edge{stroke:var(--ink-3);stroke-dasharray:3 3}
+  .box{fill:var(--card);stroke:var(--rule)} .box2{fill:var(--rule-2);stroke:var(--rule)}
+  .boxpl{fill:none;stroke:var(--tri);stroke-dasharray:6 4} .boxl{fill:var(--tri-soft);stroke:var(--tri)}
+  .lane{fill:var(--card);stroke:var(--tri)} .grid{stroke:var(--rule-2)}
+  .b-fpga{fill:var(--tri)} .b-cpu{fill:var(--cpu)}
+
+  .math{font-family:var(--mono);font-size:15px;background:var(--card);border:1px solid var(--rule);
+        border-radius:3px;padding:14px 16px;margin:0 0 20px;overflow-x:auto;white-space:pre;line-height:1.8;}
+  .tbl-scroll{overflow-x:auto;margin:26px 0;}
+  table{border-collapse:collapse;width:100%;font-size:14px;min-width:500px;}
+  th,td{padding:10px 12px;text-align:right;border-bottom:1px solid var(--rule-2);vertical-align:top;}
+  th:first-child,td:first-child{text-align:left;}
+  thead th{font-family:var(--mono);font-size:11px;letter-spacing:.06em;color:var(--ink-3);font-weight:500;border-bottom:1px solid var(--rule);}
+  tbody td{font-family:var(--mono);font-variant-numeric:tabular-nums;}
+  tbody td:first-child{font-family:var(--sans);}
+  tbody td.t{font-family:var(--sans);text-align:left;color:var(--ink-2);font-size:13.5px;}
+  table.alg td{text-align:left;font-family:var(--sans);}
+  table.alg td:first-child{font-weight:700;white-space:nowrap;}
+  tr.hit td{background:var(--tri-soft);}
+  tr.hit td strong{color:var(--tri);}
+
+  .callout{border-left:3px solid var(--path);background:var(--path-soft);padding:18px 20px;margin:28px 0;border-radius:0 3px 3px 0;}
+  .callout p:last-child,.callout ul:last-child{margin-bottom:0;}
+  .callout .label{font-family:var(--mono);font-size:11px;letter-spacing:.12em;color:var(--path);display:block;margin-bottom:8px;}
+  .callout.win{border-left-color:var(--tri);background:var(--tri-soft);}
+  .callout.win .label{color:var(--tri);}
+  .callout.fix{border-left-color:var(--wrong);background:var(--wrong-soft);}
+  .callout.fix .label{color:var(--wrong);}
+
+  .keyline{
+    font-family:var(--serif);font-size:clamp(19px,3.6vw,22px);line-height:1.7;margin:34px 0;padding:22px 0;
+    border-top:2px solid var(--ink);border-bottom:2px solid var(--ink);text-wrap:balance;
+  }
+  ul,ol{margin:0 0 18px;padding-left:1.3em;}
+  li{margin-bottom:10px;}
+  code{font-family:var(--mono);font-size:.9em;background:var(--rule-2);padding:1px 5px;border-radius:3px;}
+  a{color:var(--path);text-underline-offset:2px;}
+  a:focus-visible{outline:2px solid var(--attn);outline-offset:3px;}
+  .refs{font-size:13.5px;color:var(--ink-2);}
+  .refs li{margin-bottom:6px;}
+  footer{margin-top:72px;padding-top:26px;border-top:1px solid var(--rule);font-size:13px;color:var(--ink-3);}
+</style>
+<style>
+  .pick{display:grid;gap:16px;margin:36px 0 0;}
+  @media (min-width:600px){ .pick{grid-template-columns:1fr 1fr;} }
+  .pick a{display:block;background:var(--card);border:1px solid var(--rule);border-radius:3px;
+          padding:20px 20px 18px;text-decoration:none;color:var(--ink);}
+  .pick a:hover{border-color:var(--path);}
+  .pick .lang{font-family:var(--mono);font-size:11px;letter-spacing:.14em;color:var(--ink-3);text-transform:uppercase;}
+  .pick .t{font-family:var(--serif);font-size:22px;font-weight:700;margin:6px 0 6px;line-height:1.4;}
+  .pick .d{font-size:14px;color:var(--ink-2);line-height:1.7;}
+  .notes{font-size:14px;color:var(--ink-2);}
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <div class="eyebrow">fpga-max-cut · PYNQ-Z1</div>
+  <h1>Max-Cut on an FPGA<span style="display:block;font-size:.5em;color:var(--ink-2);margin-top:8px">FPGA で最大カット問題を解く</span></h1>
+  <p class="standfirst">
+    How fast can a small FPGA run simulated annealing for Max-Cut, compared with the same algorithm optimized just as
+    hard on CPUs? A hand-written annealing engine on a PYNQ-Z1 (Zynq XC7Z020).
+  </p>
+  <p class="standfirst" lang="ja" style="font-size:15px">
+    小さな FPGA で最大カット問題の焼きなましをどこまで速くできるか。同じアルゴリズムを同じだけ速くした CPU 版と比べます。
+    PYNQ-Z1（Zynq XC7Z020）に自作した焼きなましの回路です。
+  </p>
+  <div class="pick">
+    <a href="en/max-cut-on-fpga.html" hreflang="en">
+      <div class="lang">English</div>
+      <div class="t">Solving Max-Cut on an FPGA</div>
+      <div class="d">What Max-Cut is, the methods for it, simulated annealing, and how it was built as a circuit.</div>
+    </a>
+    <a href="ja/max-cut-on-fpga.html" hreflang="ja" lang="ja">
+      <div class="lang">日本語</div>
+      <div class="t">最大カット問題を FPGA で解く</div>
+      <div class="d">最大カット問題とは何か、解き方、焼きなまし法、そして回路にした方法。</div>
+    </a>
+  </div>
+</header>
+<section class="notes">
+  <p>
+    Source code, measurements and how to try it: <a href="https://github.com/tsjshg/fpga-max-cut">github.com/tsjshg/fpga-max-cut</a>.
+    Design notes and measurement logs (Japanese) are in <a href="https://github.com/tsjshg/fpga-max-cut/tree/main/docs"><code>docs/</code></a>.
+  </p>
+  <p lang="ja">
+    ソースコード・測定・試し方は <a href="https://github.com/tsjshg/fpga-max-cut">GitHub のリポジトリ</a>に、
+    設計メモと測定の記録は <a href="https://github.com/tsjshg/fpga-max-cut/tree/main/docs"><code>docs/</code></a> にあります。
+  </p>
+</section>
+</div>
+</body>
+</html>

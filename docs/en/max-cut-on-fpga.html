@@ -1,0 +1,911 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Solving Max-Cut on an FPGA</title>
+<meta name="description" content="What Max-Cut is, what methods exist, the key points of simulated annealing, and how it was built as a circuit on the FPGA of a PYNQ-Z1.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Shippori+Mincho+B1:wght@700&family=Zen+Kaku+Gothic+New:wght@400;500;700&family=M+PLUS+1+Code:wght@400;500;700&display=swap">
+<style>
+  :root{
+    --paper:#F4F6F7; --card:#FFFFFF;
+    --ink:#1A2027; --ink-2:#5C666F; --ink-3:#8B959D;
+    --rule:#D9DFE3; --rule-2:#EAEEF0;
+    --path:#1F5FA9; --path-soft:#E4EDF7;   /* colour 0, data flow */
+    --ddr:#C0701A;  --ddr-soft:#F9EEE1;    /* colour 1, memory */
+    --tri:#136B57;  --tri-soft:#DFF0EA;    /* FPGA */
+    --attn:#6B4FA0; --attn-soft:#EDE7F6;
+    --cpu:#77818A; --onfill:#FFFFFF;
+    --wrong:#A33A3A; --wrong-soft:#F7E9E9;
+    --serif:"Shippori Mincho B1",'Hiragino Mincho ProN',"Yu Mincho",serif;
+    --sans:"Zen Kaku Gothic New",'Hiragino Sans',"Yu Gothic",system-ui,sans-serif;
+    --mono:"M PLUS 1 Code",ui-monospace,"SFMono-Regular",Menlo,monospace;
+  }
+  @media (prefers-color-scheme: dark){
+    :root:not([data-theme="light"]){
+      color-scheme:dark;
+      --paper:#14181C; --card:#1B2126; --ink:#E6EAED; --ink-2:#A3ADB5; --ink-3:#727C84;
+      --rule:#2E363D; --rule-2:#232A30;
+      --path:#6FA8E8; --path-soft:#1C2A3A;
+      --ddr:#E0A05B;  --ddr-soft:#332617;
+      --tri:#5CC4A7;  --tri-soft:#12302A;
+      --attn:#B49BE8; --attn-soft:#261E3A;
+      --cpu:#8F9AA3; --onfill:#0F1418;
+      --wrong:#DF8C8C; --wrong-soft:#33201F;
+    }
+  }
+  :root[data-theme="dark"]{
+    color-scheme:dark;
+    --paper:#14181C; --card:#1B2126; --ink:#E6EAED; --ink-2:#A3ADB5; --ink-3:#727C84;
+    --rule:#2E363D; --rule-2:#232A30;
+    --path:#6FA8E8; --path-soft:#1C2A3A;
+    --ddr:#E0A05B;  --ddr-soft:#332617;
+    --tri:#5CC4A7;  --tri-soft:#12302A;
+    --attn:#B49BE8; --attn-soft:#261E3A;
+    --cpu:#8F9AA3; --onfill:#0F1418;
+    --wrong:#DF8C8C; --wrong-soft:#33201F;
+  }
+
+  *{box-sizing:border-box}
+  body{
+    margin:0;background:var(--paper); color:var(--ink); font-family:var(--sans);
+    font-size:16px; line-height:1.9; -webkit-font-smoothing:antialiased;
+  }
+  .wrap{max-width:760px;margin:0 auto;padding:0 16px 96px;}
+  @media (min-width:600px){ .wrap{padding:0 24px 96px;} }
+
+  .jnav{max-width:760px;margin:0 auto;padding:14px 16px 0;display:flex;flex-wrap:wrap;
+        gap:4px 18px;font-size:12.5px;line-height:1.7;opacity:.8}
+  .jnav a{color:inherit;text-underline-offset:3px;text-decoration-thickness:1px}
+  .jnav .lang{margin-left:auto}
+  @media (min-width:600px){ .jnav{padding:14px 24px 0} }
+
+  header{padding:56px 0 40px;border-bottom:1px solid var(--rule);}
+  .eyebrow{
+    font-family:var(--mono);font-size:11px;letter-spacing:.18em;
+    color:var(--ink-3);text-transform:uppercase;margin-bottom:20px;
+  }
+  h1{
+    font-family:var(--serif);font-weight:700;
+    font-size:clamp(34px,6.6vw,54px);line-height:1.25;
+    margin:0 0 20px;text-wrap:balance;letter-spacing:.01em;
+  }
+  .standfirst{font-size:17px;color:var(--ink-2);margin:0 0 14px;max-width:60ch;}
+  .toc{margin:28px 0 0;padding:14px 0 0;border-top:1px solid var(--rule-2);font-size:14px;color:var(--ink-2);}
+  .toc ol{margin:0;padding-left:1.6em;}
+  .toc li{margin:0;}
+  .toc a{color:inherit;}
+
+  section{margin-top:60px;}
+  h2{
+    font-family:var(--serif);font-weight:700;font-size:clamp(21px,4.4vw,26px);line-height:1.5;
+    margin:0 0 8px;display:flex;gap:16px;align-items:baseline;text-wrap:balance;
+  }
+  h2 .n{font-family:var(--mono);font-size:13px;font-weight:700;color:var(--path);flex:none;padding-top:2px;}
+  h2 + .sub{font-family:var(--mono);font-size:12px;color:var(--ink-3);margin:0 0 24px 39px;letter-spacing:.04em;}
+  h3{font-size:17px;font-weight:700;margin:36px 0 10px;}
+  p{margin:0 0 18px;}
+
+  figure{
+    margin:34px 0;background:var(--card);border:1px solid var(--rule);
+    border-radius:3px;padding:22px 16px 16px;
+  }
+  @media (min-width:600px){ figure{padding:26px 22px 18px;} }
+  .fig-scroll{overflow-x:auto;}
+  figure svg{display:block;width:100%;min-width:560px;height:auto;}
+  figure svg text{font-family:var(--sans);}
+  figcaption{
+    margin-top:18px;padding-top:14px;border-top:1px solid var(--rule-2);
+    font-size:13px;line-height:1.75;color:var(--ink-2);
+  }
+  figcaption b{color:var(--ink);font-weight:700;}
+
+  /* figure parts */
+  .ink{fill:var(--ink)} .ink2{fill:var(--ink-2)} .ink3{fill:var(--ink-3)} .onfill{fill:var(--onfill)}
+  .path{fill:var(--path)} .tri{fill:var(--tri)}
+  .v0{fill:var(--path)} .v1{fill:var(--ddr)}
+  .cut{stroke:var(--ink);stroke-width:3} .uncut{stroke:var(--ink-3);stroke-width:1.5;stroke-dasharray:5 5}
+  .arrow{stroke:var(--ink-2);stroke-width:1.5;fill:none} .ink2f{fill:var(--ink-2)} .pathf{fill:var(--path)}
+  .hot{fill:var(--path)} .warm{fill:var(--path-soft)} .cell{fill:var(--rule-2)}
+  .loop{stroke:var(--path);stroke-width:1.5;fill:none} .brace{stroke:var(--ink-3);stroke-width:1}
+  .bar-tri{fill:var(--tri-soft);stroke:var(--tri)} .bar-path{fill:var(--path-soft);stroke:var(--path)}
+  .bar-ddr{fill:var(--ddr-soft);stroke:var(--ddr)} .edge{stroke:var(--ink-3);stroke-dasharray:3 3}
+  .box{fill:var(--card);stroke:var(--rule)} .box2{fill:var(--rule-2);stroke:var(--rule)}
+  .boxpl{fill:none;stroke:var(--tri);stroke-dasharray:6 4} .boxl{fill:var(--tri-soft);stroke:var(--tri)}
+  .lane{fill:var(--card);stroke:var(--tri)} .grid{stroke:var(--rule-2)}
+  .b-fpga{fill:var(--tri)} .b-cpu{fill:var(--cpu)}
+
+  .math{font-family:var(--mono);font-size:15px;background:var(--card);border:1px solid var(--rule);
+        border-radius:3px;padding:14px 16px;margin:0 0 20px;overflow-x:auto;white-space:pre;line-height:1.8;}
+  .tbl-scroll{overflow-x:auto;margin:26px 0;}
+  table{border-collapse:collapse;width:100%;font-size:14px;min-width:500px;}
+  th,td{padding:10px 12px;text-align:right;border-bottom:1px solid var(--rule-2);vertical-align:top;}
+  th:first-child,td:first-child{text-align:left;}
+  thead th{font-family:var(--mono);font-size:11px;letter-spacing:.06em;color:var(--ink-3);font-weight:500;border-bottom:1px solid var(--rule);}
+  tbody td{font-family:var(--mono);font-variant-numeric:tabular-nums;}
+  tbody td:first-child{font-family:var(--sans);}
+  tbody td.t{font-family:var(--sans);text-align:left;color:var(--ink-2);font-size:13.5px;}
+  table.alg td{text-align:left;font-family:var(--sans);}
+  table.alg td:first-child{font-weight:700;white-space:nowrap;}
+  tr.hit td{background:var(--tri-soft);}
+  tr.hit td strong{color:var(--tri);}
+
+  .callout{border-left:3px solid var(--path);background:var(--path-soft);padding:18px 20px;margin:28px 0;border-radius:0 3px 3px 0;}
+  .callout p:last-child,.callout ul:last-child{margin-bottom:0;}
+  .callout .label{font-family:var(--mono);font-size:11px;letter-spacing:.12em;color:var(--path);display:block;margin-bottom:8px;}
+  .callout.win{border-left-color:var(--tri);background:var(--tri-soft);}
+  .callout.win .label{color:var(--tri);}
+  .callout.fix{border-left-color:var(--wrong);background:var(--wrong-soft);}
+  .callout.fix .label{color:var(--wrong);}
+
+  .keyline{
+    font-family:var(--serif);font-size:clamp(19px,3.6vw,22px);line-height:1.7;margin:34px 0;padding:22px 0;
+    border-top:2px solid var(--ink);border-bottom:2px solid var(--ink);text-wrap:balance;
+  }
+  ul,ol{margin:0 0 18px;padding-left:1.3em;}
+  li{margin-bottom:10px;}
+  code{font-family:var(--mono);font-size:.9em;background:var(--rule-2);padding:1px 5px;border-radius:3px;}
+  a{color:var(--path);text-underline-offset:2px;}
+  a:focus-visible{outline:2px solid var(--attn);outline-offset:3px;}
+  .refs{font-size:13.5px;color:var(--ink-2);}
+  .refs li{margin-bottom:6px;}
+  footer{margin-top:72px;padding-top:26px;border-top:1px solid var(--rule);font-size:13px;color:var(--ink-3);}
+</style>
+</head>
+<body>
+<nav class="jnav" aria-label="Navigation">
+  <a href="../index.html">Index</a>
+  <a href="https://github.com/tsjshg/fpga-max-cut">GitHub: fpga-max-cut</a>
+  <a class="lang" href="../ja/max-cut-on-fpga.html" hreflang="ja" lang="ja">日本語</a>
+</nav>
+<div class="wrap">
+
+<header>
+  <div class="eyebrow">fpga-max-cut · explainer · 2026-10-10</div>
+  <h1>Solving Max-Cut on an FPGA</h1>
+  <p class="standfirst">
+    Colour the vertices of a graph with two colours so that as many edges as possible join different colours.
+    The problem is easy to state and very hard to solve exactly. This page explains what Max-Cut is and what kinds
+    of methods exist for it. It then covers the key points of the method chosen here, <b>simulated annealing</b>,
+    and <b>how it was built as a hand-written circuit on the FPGA of a PYNQ-Z1</b>.
+  </p>
+  <p class="standfirst">
+    Numbers are measured unless stated otherwise. The implementation and the measurement notes are in the
+    <a href="https://github.com/tsjshg/fpga-max-cut">GitHub repository</a>.
+  </p>
+  <nav class="toc" aria-label="Contents">
+    <ol>
+      <li><a href="#s1">What Max-Cut is</a></li>
+      <li><a href="#s2">Ways to solve it</a></li>
+      <li><a href="#s3">Simulated annealing</a></li>
+      <li><a href="#s4">How it was built on the FPGA</a></li>
+      <li><a href="#s5">Result: the M4 is faster</a></li>
+    </ol>
+  </nav>
+</header>
+
+<!-- ============================================================ -->
+<section id="s1">
+  <h2><span class="n">01</span><span>What Max-Cut is</span></h2>
+  <p class="sub">the problem</p>
+
+  <p>
+    Split the vertices of a graph into two groups. Here, think of it as painting each vertex "colour 0" or
+    "colour 1". An edge whose two ends have different colours is a <b>cut edge</b>. <b>Max-Cut asks for the colouring
+    with the largest number of cut edges.</b> There is also a version with edge weights. This project only deals with
+    the unweighted one.
+  </p>
+
+  <figure>
+    <div class="fig-scroll"><!--FIG:graph--><svg viewBox="0 0 760 330" role="img" aria-label="A colouring of a 6-vertex, 9-edge graph (a triangular prism). A, E and F have colour 0; B, C and D have colour 1. The 7 edges whose ends differ are cut; B-C and E-F are not.">
+<line x1="430" y1="44" x2="220" y2="292" class="cut"/>
+<line x1="430" y1="44" x2="640" y2="292" class="cut"/>
+<line x1="220" y1="292" x2="640" y2="292" class="uncut"/>
+<line x1="430" y1="142" x2="345" y2="238" class="cut"/>
+<line x1="430" y1="142" x2="515" y2="238" class="cut"/>
+<line x1="345" y1="238" x2="515" y2="238" class="uncut"/>
+<line x1="430" y1="44" x2="430" y2="142" class="cut"/>
+<line x1="220" y1="292" x2="345" y2="238" class="cut"/>
+<line x1="640" y1="292" x2="515" y2="238" class="cut"/>
+<circle cx="430" cy="44" r="19" class="v0"/>
+<text x="430" y="49" class="onfill" font-size="15" text-anchor="middle" font-weight="700">A</text>
+<circle cx="220" cy="292" r="19" class="v1"/>
+<text x="220" y="297" class="onfill" font-size="15" text-anchor="middle" font-weight="700">B</text>
+<circle cx="640" cy="292" r="19" class="v1"/>
+<text x="640" y="297" class="onfill" font-size="15" text-anchor="middle" font-weight="700">C</text>
+<circle cx="430" cy="142" r="19" class="v1"/>
+<text x="430" y="147" class="onfill" font-size="15" text-anchor="middle" font-weight="700">D</text>
+<circle cx="345" cy="238" r="19" class="v0"/>
+<text x="345" y="243" class="onfill" font-size="15" text-anchor="middle" font-weight="700">E</text>
+<circle cx="515" cy="238" r="19" class="v0"/>
+<text x="515" y="243" class="onfill" font-size="15" text-anchor="middle" font-weight="700">F</text>
+<circle cx="34" cy="40" r="9" class="v0"/><text x="52" y="45" class="ink2" font-size="13" text-anchor="start">colour 0</text>
+<circle cx="34" cy="68" r="9" class="v1"/><text x="52" y="73" class="ink2" font-size="13" text-anchor="start">colour 1</text>
+<line x1="22" y1="98" x2="46" y2="98" class="cut"/><text x="52" y="103" class="ink2" font-size="13" text-anchor="start">cut edges (7)</text>
+<line x1="22" y1="126" x2="46" y2="126" class="uncut"/><text x="52" y="131" class="ink2" font-size="13" text-anchor="start">uncut edges (2)</text>
+</svg><!--/FIG--></div>
+    <figcaption>
+      <b>A colouring of a graph with 6 vertices and 9 edges.</b> The thick lines are cut edges: 7 of the 9.
+      A triangle can never have all three edges cut, because two of its three vertices must share a colour.
+      So at most 2 edges from each triangle plus the 3 vertical edges can be cut, and 7 is the maximum for this graph.
+    </figcaption>
+  </figure>
+
+  <p>As a formula: with s<sub>v</sub> ∈ {0, 1} the colour of vertex v, find the s that maximizes</p>
+  <div class="math">C(s) = Σ<sub>(u,v) ∈ E</sub> [ s<sub>u</sub> ≠ s<sub>v</sub> ]      ([ ] is 1 if the condition holds, 0 otherwise)</div>
+  <p>
+    A graph with n vertices has 2<sup>n</sup> colourings (2<sup>n−1</sup> really, since swapping all colours gives
+    the same cut). For n = 1024, as used in this project, that is 2<sup>1023</sup> ≈ 10<sup>308</sup>, far too many to try.
+  </p>
+  <p>
+    The hardness is also known in theory. The decision version of Max-Cut is one of Karp's 21 NP-complete problems
+    (1972). Even approximating it is hard: unless P = NP, no algorithm can guarantee more than 16/17 ≈ 0.941 of the
+    optimum (Håstad 2001).
+  </p>
+
+  <div class="callout">
+    <span class="label">Link to the Ising model</span>
+    <p>
+      Replace the colours by σ<sub>v</sub> = ±1 (+1 for colour 0, −1 for colour 1). An edge (u, v) is cut exactly
+      when σ<sub>u</sub>σ<sub>v</sub> = −1. So C = Σ (1 − σ<sub>u</sub>σ<sub>v</sub>) / 2, and <b>maximizing the cut is the
+      same as minimizing Σ σ<sub>u</sub>σ<sub>v</sub></b>. That is the energy of an antiferromagnetic Ising model, a
+      model of magnets that prefer to point opposite to their neighbours. This is why Max-Cut is the standard benchmark
+      for quantum annealers and Ising machines.
+    </p>
+  </div>
+
+  <p>
+    It also has applications. Assigning the wires of a circuit board or a chip to two layers so as to minimize the
+    holes between layers (vias) is a Max-Cut problem. So is finding the lowest-energy state of a spin glass in
+    statistical physics.
+  </p>
+</section>
+
+<!-- ============================================================ -->
+<section id="s2">
+  <h2><span class="n">02</span><span>Ways to solve it</span></h2>
+  <p class="sub">exact, approximate, heuristic, special hardware</p>
+
+  <p>Methods fall into four groups, by what they guarantee.</p>
+
+  <div class="tbl-scroll">
+  <table class="alg">
+    <thead><tr><th>Approach</th><th>Typical methods</th><th>What you get</th></tr></thead>
+    <tbody>
+      <tr><td>Solve exactly</td><td>Branch and bound with semidefinite-programming (SDP) bounds, e.g. BiqMac</td><td>The optimum and a proof. Size is limited: random graphs get hard even at a few hundred vertices</td></tr>
+      <tr><td>Approximate with a guarantee</td><td>Random colouring (half the edges in expectation). Goemans–Williamson (1995): solve an SDP, then round randomly</td><td>At least a fixed fraction of the optimum. Goemans–Williamson gives about 0.878, which is the best possible if the Unique Games Conjecture holds</td></tr>
+      <tr><td>Find good solutions fast (heuristics)</td><td>Local search, <b>simulated annealing</b>, tabu search (e.g. Breakout Local Search), rank-two relaxation (Burer–Monteiro–Zhang), replica exchange</td><td>No guarantee, but in practice optimal or near-optimal cuts, fast. The best-known values on the G-set benchmark have been improved by methods of this kind</td></tr>
+      <tr><td>Special-purpose machines</td><td>Quantum annealers (D-Wave), coherent Ising machines, Digital Annealer, simulated bifurcation machine (runs on FPGAs and GPUs)</td><td>Search the problem in Ising form with dedicated, parallel hardware</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <p>
+    This project is in the third group: <b>it does not prove optimality, it aims for good cuts found fast</b>.
+    Within that group it uses simulated annealing, for three reasons: the procedure is simple, it can be written with
+    integers only, and many independent searches are easy to run side by side. All three make it a good fit for a
+    circuit, so this is also a small, hand-built experiment with the fourth group, special-purpose hardware.
+  </p>
+</section>
+
+<!-- ============================================================ -->
+<section id="s3">
+  <h2><span class="n">03</span><span>Simulated annealing</span></h2>
+  <p class="sub">as used here</p>
+
+  <h3>Flip one vertex at a time</h3>
+  <p>
+    The simplest method is local search: pick a vertex, and flip its colour if that increases the cut. Repeat until no
+    flip helps. The change ΔC from flipping vertex v depends only on v's neighbours. Let n<sub>same</sub> be the number
+    of neighbours with v's colour and n<sub>opp</sub> the number with the other colour. Flipping v turns every edge to a
+    same-colour neighbour into a cut edge, and every edge to an opposite-colour neighbour into an uncut one:
+  </p>
+  <div class="math">ΔC = n_same − n_opp = 2·n_same − d      (d is v's degree, the number of neighbours)</div>
+
+  <figure>
+    <div class="fig-scroll"><!--FIG:flip--><svg viewBox="0 0 760 290" role="img" aria-label="Vertex v before and after flipping. v has 4 neighbours, 3 with the same colour and 1 with the other. Before the flip 1 edge is cut, after it 3 are, so ΔC = 3 − 1 = +2.">
+<line x1="170" y1="130" x2="170" y2="48" class="uncut"/>
+<line x1="170" y1="130" x2="66" y2="130" class="uncut"/>
+<line x1="170" y1="130" x2="170" y2="212" class="uncut"/>
+<line x1="170" y1="130" x2="274" y2="130" class="cut"/>
+<circle cx="170" cy="48" r="15" class="v0"/>
+<circle cx="66" cy="130" r="15" class="v0"/>
+<circle cx="170" cy="212" r="15" class="v0"/>
+<circle cx="274" cy="130" r="15" class="v1"/>
+<circle cx="170" cy="130" r="21" class="v0"/><text x="170" y="136" class="onfill" font-size="17" text-anchor="middle" font-weight="700">v</text>
+<text x="170" y="22" class="ink3" font-size="12" text-anchor="middle" letter-spacing=".08em">before</text>
+<text x="170" y="268" class="ink" font-size="14" text-anchor="middle" font-weight="700">1 cut edge</text>
+<line x1="590" y1="130" x2="590" y2="48" class="cut"/>
+<line x1="590" y1="130" x2="486" y2="130" class="cut"/>
+<line x1="590" y1="130" x2="590" y2="212" class="cut"/>
+<line x1="590" y1="130" x2="694" y2="130" class="uncut"/>
+<circle cx="590" cy="48" r="15" class="v0"/>
+<circle cx="486" cy="130" r="15" class="v0"/>
+<circle cx="590" cy="212" r="15" class="v0"/>
+<circle cx="694" cy="130" r="15" class="v1"/>
+<circle cx="590" cy="130" r="21" class="v1"/><text x="590" y="136" class="onfill" font-size="17" text-anchor="middle" font-weight="700">v</text>
+<text x="590" y="22" class="ink3" font-size="12" text-anchor="middle" letter-spacing=".08em">after</text>
+<text x="590" y="268" class="ink" font-size="14" text-anchor="middle" font-weight="700">3 cut edges</text>
+<line x1="320" y1="130" x2="430" y2="130" class="arrow" marker-end="url(#ah)"/>
+<defs><marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto"><path d="M0,0 L10,5 L0,10 z" class="ink2f"/></marker></defs>
+<text x="375" y="116" class="ink2" font-size="13" text-anchor="middle">flip v</text>
+<text x="380" y="200" class="path" font-size="14" text-anchor="middle" font-weight="700" font-family="var(--mono)">ΔC = n_same − n_opp = 3 − 1 = +2</text>
+</svg><!--/FIG--></div>
+    <figcaption>
+      <b>The change from a flip depends only on the neighbours.</b> If a degree-4 vertex v has 3 neighbours of its own
+      colour and 1 of the other, flipping it raises the cut edges from 1 to 3: ΔC = +2.
+    </figcaption>
+  </figure>
+
+  <h3>Sometimes accept a flip that makes things worse</h3>
+  <p>
+    Local search stops at a state where no single flip helps (a local optimum). Simulated annealing (Kirkpatrick et al.,
+    1983) gets past this by <b>also accepting a flip that lowers the cut, with probability e<sup>ΔC/T</sup></b> (the
+    Metropolis rule). T is the "temperature". It starts high, so many such flips are accepted, and is lowered step by
+    step until almost none are. The name comes from annealing metal: cooling it slowly so its crystals settle.
+  </p>
+  <p>If every vertex has the same degree d, ΔC takes only d + 1 values. For d = 4, used in this project:</p>
+
+  <div class="tbl-scroll">
+  <table>
+    <thead><tr><th>same-colour neighbours n_same</th><th>ΔC</th><th>acceptance probability</th><th>T = 0.8 (start)</th><th>T = 0.2 (end)</th></tr></thead>
+    <tbody>
+      <tr><td>0</td><td>−4</td><td>e<sup>−4/T</sup></td><td>0.0067</td><td>2.1 × 10<sup>−9</sup></td></tr>
+      <tr><td>1</td><td>−2</td><td>e<sup>−2/T</sup></td><td>0.082</td><td>4.5 × 10<sup>−5</sup></td></tr>
+      <tr><td>2</td><td>0</td><td>1</td><td>1</td><td>1</td></tr>
+      <tr><td>3</td><td>+2</td><td>1</td><td>1</td><td>1</td></tr>
+      <tr><td>4</td><td>+4</td><td>1</td><td>1</td><td>1</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <h3>Choices made in this project</h3>
+  <ul>
+    <li><b>Visit the vertices in order, 0, 1, …, n−1</b> (one pass is a <i>sweep</i>). This reached the target about 4×
+      sooner than picking a random vertex each time (measured). It also suits the circuit, as explained below.</li>
+    <li><b>Lower the temperature geometrically from 0.8 to 0.2 in 100 steps</b>, 10 sweeps per step, 1000 sweeps in
+      all. The start and end temperatures were chosen with a grid search on the CPU version.</li>
+    <li><b>Each replica has its own xorshift64 generator</b> (Marsaglia 2003). It is advanced exactly once per trial,
+      and its upper 32 bits are r.</li>
+    <li><b>No exp is computed.</b> A flip is accepted if ΔC ≥ 0 or r &lt; TH[n_same]. The threshold table
+      TH = ⌊e<sup>ΔC/T</sup> · 2<sup>32</sup>⌋ is computed once per temperature step on the CPU and turned into
+      integers.</li>
+  </ul>
+
+  <div class="callout win">
+    <span class="label">Bit-for-bit the same search</span>
+    <p>
+      Floating point is used only for the moment the threshold table is built. After that everything is integer, so
+      <b>the Mac, the board's ARM and the FPGA circuit follow the same search down to the last bit</b> from the same
+      seeds. That is what allows every word the circuit returns to be checked against the CPU. It also means the number
+      of trials needed to reach a target is the same on every engine, so comparing speed is simply comparing trials per
+      second.
+    </p>
+  </div>
+
+  <h3>Run many, measure time to target</h3>
+  <p>
+    Hundreds of annealing runs that differ only in their initial colouring and random seed (<b>replicas</b>) run at the
+    same time. They are compared with <b>TTS99</b>, a measure common in the Ising-machine literature. If one run of
+    length τ reaches the target cut with probability p, the time to reach it at least once with 99% probability is
+    τ · ln(0.01) / ln(1 − p).
+  </p>
+  <p>
+    On a random 4-regular graph with n = 1024 (2048 edges), about 57% of replicas reached the best-known cut, 1774, in
+    one run of the standard schedule. TTS99 is about 5,500 sweeps, or about 5.7 million trials per replica (measured).
+    Whether 1774 is optimal is not known.
+  </p>
+</section>
+
+<!-- ============================================================ -->
+<section id="s4">
+  <h2><span class="n">04</span><span>How it was built on the FPGA</span></h2>
+  <p class="sub">PYNQ-Z1 · Zynq XC7Z020 · 125 MHz</p>
+
+  <p>
+    The PYNQ-Z1 carries a Zynq XC7Z020: two ARM Cortex-A9 cores and an FPGA on one chip. The FPGA part has 53,200 LUTs
+    (small logic blocks), 106,400 flip-flops and 140 block RAMs of 36 Kb. The annealing circuit is written by hand in
+    Verilog and runs at 125 MHz.
+  </p>
+
+  <figure>
+    <div class="fig-scroll"><!--FIG:system--><svg viewBox="0 0 760 250" role="img" aria-label="Overall structure. The ARM prepares the job (graph, initial colourings, random seeds, threshold table) in DDR, and an AXI DMA streams it into the FPGA circuit. The circuit loads it, anneals with 48 lanes and sends back the results. The graph and colourings live in the circuit's BRAM, and nothing goes in or out while it runs.">
+<defs><marker id="ah3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" class="ink2f"/></marker></defs>
+<rect x="14" y="30" width="170" height="190" rx="4" class="box"/>
+<text x="26" y="50" class="ink3" font-size="11" text-anchor="start" letter-spacing=".12em">PS</text>
+<text x="99" y="100" class="ink" font-size="13" text-anchor="middle" font-weight="700">ARM Cortex-A9 × 2</text>
+<text x="99" y="122" class="ink2" font-size="11.5" text-anchor="middle">builds the job, checks results</text>
+<rect x="44" y="150" width="110" height="44" rx="3" class="box2"/><text x="99" y="177" class="ink" font-size="13" text-anchor="middle" font-weight="700">DDR3</text>
+<rect x="214" y="16" width="532" height="218" rx="4" class="boxpl"/>
+<text x="228" y="36" class="tri" font-size="11" text-anchor="start" letter-spacing=".12em">FPGA (PL)</text>
+<rect x="232" y="90" width="96" height="70" rx="3" class="box"/><text x="280" y="130" class="ink" font-size="13" text-anchor="middle" font-weight="700">AXI DMA</text>
+<rect x="372" y="54" width="92" height="40" rx="3" class="box"/><text x="418" y="79" class="ink" font-size="12.5" text-anchor="middle">load</text>
+<rect x="490" y="54" width="122" height="142" rx="3" class="boxl"/>
+<rect x="500" y="64" width="92" height="18" rx="2" class="lane"/>
+<rect x="503" y="67" width="92" height="18" rx="2" class="lane"/>
+<rect x="506" y="70" width="92" height="18" rx="2" class="lane"/>
+<rect x="509" y="73" width="92" height="18" rx="2" class="lane"/>
+<rect x="512" y="76" width="92" height="18" rx="2" class="lane"/>
+<text x="551" y="130" class="tri" font-size="14" text-anchor="middle" font-weight="700">48 lanes</text>
+<text x="551" y="150" class="ink2" font-size="11.5" text-anchor="middle">16 replicas each</text>
+<rect x="372" y="156" width="92" height="40" rx="3" class="box"/><text x="418" y="181" class="ink" font-size="12.5" text-anchor="middle">results</text>
+<rect x="630" y="70" width="104" height="110" rx="3" class="box2"/>
+<text x="682" y="106" class="ink" font-size="12" text-anchor="middle" font-weight="700">BRAM</text>
+<text x="682" y="128" class="ink2" font-size="11.5" text-anchor="middle">adjacency</text>
+<text x="682" y="150" class="ink2" font-size="11.5" text-anchor="middle">colouring</text>
+<line x1="154" y1="160" x2="232" y2="118" class="arrow" marker-end="url(#ah3)"/>
+<line x1="328" y1="104" x2="372" y2="76" class="arrow" marker-end="url(#ah3)"/>
+<line x1="464" y1="74" x2="490" y2="74" class="arrow" marker-end="url(#ah3)"/>
+<line x1="490" y1="176" x2="464" y2="176" class="arrow" marker-end="url(#ah3)"/>
+<line x1="372" y1="176" x2="328" y2="142" class="arrow" marker-end="url(#ah3)"/>
+<line x1="232" y1="136" x2="154" y2="182" class="arrow" marker-end="url(#ah3)"/>
+<line x1="612" y1="125" x2="630" y2="125" class="arrow" marker-end="url(#ah3)"/>
+</svg><!--/FIG--></div>
+    <figcaption>
+      <b>Overall structure.</b> The ARM builds a job and one DMA stream carries it into the circuit. The circuit keeps
+      the adjacency list and the colourings in its own BRAM and talks to nothing while it runs. When it finishes, a
+      second stream carries the results back.
+    </figcaption>
+  </figure>
+
+  <p>
+    One trial reads the colours of vertex v and its 4 neighbours, counts n<sub>same</sub>, advances the random number
+    and compares it with a threshold, then writes the colour and the cut value if the flip is accepted. Built naively,
+    <b>reading memory in 5 places per trial</b> is the problem: a block RAM has only two ports. Three ideas solve it.
+  </p>
+
+  <h3>Idea 1: interleave 16 replicas in one pipeline</h3>
+  <p>
+    A trial is split into a 5-stage pipeline, and the trials of replicas 0, 1, 2, …, 15 enter it one per clock in turn.
+    The pipeline accepts one trial every clock, so one pipeline (a <b>lane</b>) does 125 million trials per second.
+  </p>
+
+  <figure>
+    <div class="fig-scroll"><!--FIG:pipeline--><svg viewBox="0 0 760 262" role="img" aria-label="Timing of 16 replicas interleaved in a 5-stage pipeline. The number in each cell is the replica in that stage. Replica 0 enters S0 at clock 0, writes its result in S4 at clock 4, and its next trial enters S0 at clock 16.">
+<text x="165.0" y="32" class="ink3" font-size="11" text-anchor="middle" font-family="var(--mono)">0</text>
+<text x="195.0" y="32" class="ink3" font-size="11" text-anchor="middle" font-family="var(--mono)">1</text>
+<text x="225.0" y="32" class="ink3" font-size="11" text-anchor="middle" font-family="var(--mono)">2</text>
+<text x="255.0" y="32" class="ink3" font-size="11" text-anchor="middle" font-family="var(--mono)">3</text>
+<text x="285.0" y="32" class="ink3" font-size="11" text-anchor="middle" font-family="var(--mono)">4</text>
+<text x="315.0" y="32" class="ink3" font-size="11" text-anchor="middle" font-family="var(--mono)">5</text>
+<text x="345.0" y="32" class="ink3" font-size="11" text-anchor="middle" font-family="var(--mono)">6</text>
+<text x="375.0" y="32" class="ink3" font-size="11" text-anchor="middle" font-family="var(--mono)">7</text>
+<text x="405.0" y="32" class="ink3" font-size="11" text-anchor="middle" font-family="var(--mono)">8</text>
+<text x="435.0" y="32" class="ink3" font-size="11" text-anchor="middle" font-family="var(--mono)">9</text>
+<text x="465.0" y="32" class="ink3" font-size="11" text-anchor="middle" font-family="var(--mono)">10</text>
+<text x="495.0" y="32" class="ink3" font-size="11" text-anchor="middle" font-family="var(--mono)">11</text>
+<text x="525.0" y="32" class="ink3" font-size="11" text-anchor="middle" font-family="var(--mono)">12</text>
+<text x="555.0" y="32" class="ink3" font-size="11" text-anchor="middle" font-family="var(--mono)">13</text>
+<text x="585.0" y="32" class="ink3" font-size="11" text-anchor="middle" font-family="var(--mono)">14</text>
+<text x="615.0" y="32" class="ink3" font-size="11" text-anchor="middle" font-family="var(--mono)">15</text>
+<text x="645.0" y="32" class="ink3" font-size="11" text-anchor="middle" font-family="var(--mono)">16</text>
+<text x="675.0" y="32" class="ink3" font-size="11" text-anchor="middle" font-family="var(--mono)">17</text>
+<text x="705.0" y="32" class="ink3" font-size="11" text-anchor="middle" font-family="var(--mono)">18</text>
+<text x="735.0" y="32" class="ink3" font-size="11" text-anchor="middle" font-family="var(--mono)">19</text>
+<text x="140" y="32" class="ink3" font-size="11" text-anchor="end">clock</text>
+<text x="140" y="64" class="ink2" font-size="12" text-anchor="end">S0 RNG, pick bits</text>
+<rect x="151" y="45" width="28" height="28" rx="2" class="hot"/>
+<text x="165.0" y="64" class="onfill" font-size="11" text-anchor="middle" font-family="var(--mono)">0</text>
+<rect x="181" y="45" width="28" height="28" rx="2" class="warm"/>
+<text x="195.0" y="64" class="ink2" font-size="11" text-anchor="middle" font-family="var(--mono)">1</text>
+<rect x="211" y="45" width="28" height="28" rx="2" class="cell"/>
+<text x="225.0" y="64" class="ink2" font-size="11" text-anchor="middle" font-family="var(--mono)">2</text>
+<rect x="241" y="45" width="28" height="28" rx="2" class="cell"/>
+<text x="255.0" y="64" class="ink2" font-size="11" text-anchor="middle" font-family="var(--mono)">3</text>
+<rect x="271" y="45" width="28" height="28" rx="2" class="cell"/>
+<text x="285.0" y="64" class="ink2" font-size="11" text-anchor="middle" font-family="var(--mono)">4</text>
+<rect x="301" y="45" width="28" height="28" rx="2" class="cell"/>
+<text x="315.0" y="64" class="ink2" font-size="11" text-anchor="middle" font-family="var(--mono)">5</text>
+<rect x="331" y="45" width="28" height="28" rx="2" class="cell"/>
+<text x="345.0" y="64" class="ink2" font-size="11" text-anchor="middle" font-family="var(--mono)">6</text>
+<rect x="361" y="45" width="28" height="28" rx="2" class="cell"/>
+<text x="375.0" y="64" class="ink2" font-size="11" text-anchor="middle" font-family="var(--mono)">7</text>
+<rect x="391" y="45" width="28" height="28" rx="2" class="cell"/>
+<text x="405.0" y="64" class="ink2" font-size="11" text-anchor="middle" font-family="var(--mono)">8</text>
+<rect x="421" y="45" width="28" height="28" rx="2" class="cell"/>
+<text x="435.0" y="64" class="ink2" font-size="11" text-anchor="middle" font-family="var(--mono)">9</text>
+<rect x="451" y="45" width="28" height="28" rx="2" class="cell"/>
+<text x="465.0" y="64" class="ink2" font-size="11" text-anchor="middle" font-family="var(--mono)">10</text>
+<rect x="481" y="45" width="28" height="28" rx="2" class="cell"/>
+<text x="495.0" y="64" class="ink2" font-size="11" text-anchor="middle" font-family="var(--mono)">11</text>
+<rect x="511" y="45" width="28" height="28" rx="2" class="cell"/>
+<text x="525.0" y="64" class="ink2" font-size="11" text-anchor="middle" font-family="var(--mono)">12</text>
+<rect x="541" y="45" width="28" height="28" rx="2" class="cell"/>
+<text x="555.0" y="64" class="ink2" font-size="11" text-anchor="middle" font-family="var(--mono)">13</text>
+<rect x="571" y="45" width="28" height="28" rx="2" class="cell"/>
+<text x="585.0" y="64" class="ink2" font-size="11" text-anchor="middle" font-family="var(--mono)">14</text>
+<rect x="601" y="45" width="28" height="28" rx="2" class="cell"/>
+<text x="615.0" y="64" class="ink2" font-size="11" text-anchor="middle" font-family="var(--mono)">15</text>
+<rect x="631" y="45" width="28" height="28" rx="2" class="hot"/>
+<text x="645.0" y="64" class="onfill" font-size="11" text-anchor="middle" font-family="var(--mono)">0</text>
+<rect x="661" y="45" width="28" height="28" rx="2" class="warm"/>
+<text x="675.0" y="64" class="ink2" font-size="11" text-anchor="middle" font-family="var(--mono)">1</text>
+<rect x="691" y="45" width="28" height="28" rx="2" class="cell"/>
+<text x="705.0" y="64" class="ink2" font-size="11" text-anchor="middle" font-family="var(--mono)">2</text>
+<rect x="721" y="45" width="28" height="28" rx="2" class="cell"/>
+<text x="735.0" y="64" class="ink2" font-size="11" text-anchor="middle" font-family="var(--mono)">3</text>
+<text x="140" y="94" class="ink2" font-size="12" text-anchor="end">S1 count, compare</text>
+<rect x="181" y="75" width="28" height="28" rx="2" class="hot"/>
+<text x="195.0" y="94" class="onfill" font-size="11" text-anchor="middle" font-family="var(--mono)">0</text>
+<rect x="211" y="75" width="28" height="28" rx="2" class="warm"/>
+<text x="225.0" y="94" class="ink2" font-size="11" text-anchor="middle" font-family="var(--mono)">1</text>
+<rect x="241" y="75" width="28" height="28" rx="2" class="cell"/>
+<text x="255.0" y="94" class="ink2" font-size="11" text-anchor="middle" font-family="var(--mono)">2</text>
+<rect x="271" y="75" width="28" height="28" rx="2" class="cell"/>
+<text x="285.0" y="94" class="ink2" font-size="11" text-anchor="middle" font-family="var(--mono)">3</text>
+<rect x="301" y="75" width="28" height="28" rx="2" class="cell"/>
+<text x="315.0" y="94" class="ink2" font-size="11" text-anchor="middle" font-family="var(--mono)">4</text>
+<rect x="331" y="75" width="28" height="28" rx="2" class="cell"/>
+<text x="345.0" y="94" class="ink2" font-size="11" text-anchor="middle" font-family="var(--mono)">5</text>
+<rect x="361" y="75" width="28" height="28" rx="2" class="cell"/>
+<text x="375.0" y="94" class="ink2" font-size="11" text-anchor="middle" font-family="var(--mono)">6</text>
+<rect x="391" y="75" width="28" height="28" rx="2" class="cell"/>
+<text x="405.0" y="94" class="ink2" font-size="11" text-anchor="middle" font-family="var(--mono)">7</text>
+<rect x="421" y="75" width="28" height="28" rx="2" class="cell"/>
+<text x="435.0" y="94" class="ink2" font-size="11" text-anchor="middle" font-family="var(--mono)">8</text>
+<rect x="451" y="75" width="28" height="28" rx="2" class="cell"/>
+<text x="465.0" y="94" class="ink2" font-size="11" text-anchor="middle" font-family="var(--mono)">9</text>
+<rect x="481" y="75" width="28" height="28" rx="2" class="cell"/>
+<text x="495.0" y="94" class="ink2" font-size="11" text-anchor="middle" font-family="var(--mono)">10</text>
+<rect x="511" y="75" width="28" height="28" rx="2" class="cell"/>
+<text x="525.0" y="94" class="ink2" font-size="11" text-anchor="middle" font-family="var(--mono)">11</text>
+<rect x="541" y="75" width="28" height="28" rx="2" class="cell"/>
+<text x="555.0" y="94" class="ink2" font-size="11" text-anchor="middle" font-family="var(--mono)">12</text>
+<rect x="571" y="75" width="28" height="28" rx="2" class="cell"/>
+<text x="585.0" y="94" class="ink2" font-size="11" text-anchor="middle" font-family="var(--mono)">13</text>
+<rect x="601" y="75" width="28" height="28" rx="2" class="cell"/>
+<text x="615.0" y="94" class="ink2" font-size="11" text-anchor="middle" font-family="var(--mono)">14</text>
+<rect x="631" y="75" width="28" height="28" rx="2" class="cell"/>
+<text x="645.0" y="94" class="ink2" font-size="11" text-anchor="middle" font-family="var(--mono)">15</text>
+<rect x="661" y="75" width="28" height="28" rx="2" class="hot"/>
+<text x="675.0" y="94" class="onfill" font-size="11" text-anchor="middle" font-family="var(--mono)">0</text>
+<rect x="691" y="75" width="28" height="28" rx="2" class="warm"/>
+<text x="705.0" y="94" class="ink2" font-size="11" text-anchor="middle" font-family="var(--mono)">1</text>
+<rect x="721" y="75" width="28" height="28" rx="2" class="cell"/>
+<text x="735.0" y="94" class="ink2" font-size="11" text-anchor="middle" font-family="var(--mono)">2</text>
+<text x="140" y="124" class="ink2" font-size="12" text-anchor="end">S2 accept, C</text>
+<rect x="211" y="105" width="28" height="28" rx="2" class="hot"/>
+<text x="225.0" y="124" class="onfill" font-size="11" text-anchor="middle" font-family="var(--mono)">0</text>
+<rect x="241" y="105" width="28" height="28" rx="2" class="warm"/>
+<text x="255.0" y="124" class="ink2" font-size="11" text-anchor="middle" font-family="var(--mono)">1</text>
+<rect x="271" y="105" width="28" height="28" rx="2" class="cell"/>
+<text x="285.0" y="124" class="ink2" font-size="11" text-anchor="middle" font-family="var(--mono)">2</text>
+<rect x="301" y="105" width="28" height="28" rx="2" class="cell"/>
+<text x="315.0" y="124" class="ink2" font-size="11" text-anchor="middle" font-family="var(--mono)">3</text>
+<rect x="331" y="105" width="28" height="28" rx="2" class="cell"/>
+<text x="345.0" y="124" class="ink2" font-size="11" text-anchor="middle" font-family="var(--mono)">4</text>
+<rect x="361" y="105" width="28" height="28" rx="2" class="cell"/>
+<text x="375.0" y="124" class="ink2" font-size="11" text-anchor="middle" font-family="var(--mono)">5</text>
+<rect x="391" y="105" width="28" height="28" rx="2" class="cell"/>
+<text x="405.0" y="124" class="ink2" font-size="11" text-anchor="middle" font-family="var(--mono)">6</text>
+<rect x="421" y="105" width="28" height="28" rx="2" class="cell"/>
+<text x="435.0" y="124" class="ink2" font-size="11" text-anchor="middle" font-family="var(--mono)">7</text>
+<rect x="451" y="105" width="28" height="28" rx="2" class="cell"/>
+<text x="465.0" y="124" class="ink2" font-size="11" text-anchor="middle" font-family="var(--mono)">8</text>
+<rect x="481" y="105" width="28" height="28" rx="2" class="cell"/>
+<text x="495.0" y="124" class="ink2" font-size="11" text-anchor="middle" font-family="var(--mono)">9</text>
+<rect x="511" y="105" width="28" height="28" rx="2" class="cell"/>
+<text x="525.0" y="124" class="ink2" font-size="11" text-anchor="middle" font-family="var(--mono)">10</text>
+<rect x="541" y="105" width="28" height="28" rx="2" class="cell"/>
+<text x="555.0" y="124" class="ink2" font-size="11" text-anchor="middle" font-family="var(--mono)">11</text>
+<rect x="571" y="105" width="28" height="28" rx="2" class="cell"/>
+<text x="585.0" y="124" class="ink2" font-size="11" text-anchor="middle" font-family="var(--mono)">12</text>
+<rect x="601" y="105" width="28" height="28" rx="2" class="cell"/>
+<text x="615.0" y="124" class="ink2" font-size="11" text-anchor="middle" font-family="var(--mono)">13</text>
+<rect x="631" y="105" width="28" height="28" rx="2" class="cell"/>
+<text x="645.0" y="124" class="ink2" font-size="11" text-anchor="middle" font-family="var(--mono)">14</text>
+<rect x="661" y="105" width="28" height="28" rx="2" class="cell"/>
+<text x="675.0" y="124" class="ink2" font-size="11" text-anchor="middle" font-family="var(--mono)">15</text>
+<rect x="691" y="105" width="28" height="28" rx="2" class="hot"/>
+<text x="705.0" y="124" class="onfill" font-size="11" text-anchor="middle" font-family="var(--mono)">0</text>
+<rect x="721" y="105" width="28" height="28" rx="2" class="warm"/>
+<text x="735.0" y="124" class="ink2" font-size="11" text-anchor="middle" font-family="var(--mono)">1</text>
+<text x="140" y="154" class="ink2" font-size="12" text-anchor="end">S3 flip, vs. best</text>
+<rect x="241" y="135" width="28" height="28" rx="2" class="hot"/>
+<text x="255.0" y="154" class="onfill" font-size="11" text-anchor="middle" font-family="var(--mono)">0</text>
+<rect x="271" y="135" width="28" height="28" rx="2" class="warm"/>
+<text x="285.0" y="154" class="ink2" font-size="11" text-anchor="middle" font-family="var(--mono)">1</text>
+<rect x="301" y="135" width="28" height="28" rx="2" class="cell"/>
+<text x="315.0" y="154" class="ink2" font-size="11" text-anchor="middle" font-family="var(--mono)">2</text>
+<rect x="331" y="135" width="28" height="28" rx="2" class="cell"/>
+<text x="345.0" y="154" class="ink2" font-size="11" text-anchor="middle" font-family="var(--mono)">3</text>
+<rect x="361" y="135" width="28" height="28" rx="2" class="cell"/>
+<text x="375.0" y="154" class="ink2" font-size="11" text-anchor="middle" font-family="var(--mono)">4</text>
+<rect x="391" y="135" width="28" height="28" rx="2" class="cell"/>
+<text x="405.0" y="154" class="ink2" font-size="11" text-anchor="middle" font-family="var(--mono)">5</text>
+<rect x="421" y="135" width="28" height="28" rx="2" class="cell"/>
+<text x="435.0" y="154" class="ink2" font-size="11" text-anchor="middle" font-family="var(--mono)">6</text>
+<rect x="451" y="135" width="28" height="28" rx="2" class="cell"/>
+<text x="465.0" y="154" class="ink2" font-size="11" text-anchor="middle" font-family="var(--mono)">7</text>
+<rect x="481" y="135" width="28" height="28" rx="2" class="cell"/>
+<text x="495.0" y="154" class="ink2" font-size="11" text-anchor="middle" font-family="var(--mono)">8</text>
+<rect x="511" y="135" width="28" height="28" rx="2" class="cell"/>
+<text x="525.0" y="154" class="ink2" font-size="11" text-anchor="middle" font-family="var(--mono)">9</text>
+<rect x="541" y="135" width="28" height="28" rx="2" class="cell"/>
+<text x="555.0" y="154" class="ink2" font-size="11" text-anchor="middle" font-family="var(--mono)">10</text>
+<rect x="571" y="135" width="28" height="28" rx="2" class="cell"/>
+<text x="585.0" y="154" class="ink2" font-size="11" text-anchor="middle" font-family="var(--mono)">11</text>
+<rect x="601" y="135" width="28" height="28" rx="2" class="cell"/>
+<text x="615.0" y="154" class="ink2" font-size="11" text-anchor="middle" font-family="var(--mono)">12</text>
+<rect x="631" y="135" width="28" height="28" rx="2" class="cell"/>
+<text x="645.0" y="154" class="ink2" font-size="11" text-anchor="middle" font-family="var(--mono)">13</text>
+<rect x="661" y="135" width="28" height="28" rx="2" class="cell"/>
+<text x="675.0" y="154" class="ink2" font-size="11" text-anchor="middle" font-family="var(--mono)">14</text>
+<rect x="691" y="135" width="28" height="28" rx="2" class="cell"/>
+<text x="705.0" y="154" class="ink2" font-size="11" text-anchor="middle" font-family="var(--mono)">15</text>
+<rect x="721" y="135" width="28" height="28" rx="2" class="hot"/>
+<text x="735.0" y="154" class="onfill" font-size="11" text-anchor="middle" font-family="var(--mono)">0</text>
+<text x="140" y="184" class="ink2" font-size="12" text-anchor="end">S4 record</text>
+<rect x="271" y="165" width="28" height="28" rx="2" class="hot"/>
+<text x="285.0" y="184" class="onfill" font-size="11" text-anchor="middle" font-family="var(--mono)">0</text>
+<rect x="301" y="165" width="28" height="28" rx="2" class="warm"/>
+<text x="315.0" y="184" class="ink2" font-size="11" text-anchor="middle" font-family="var(--mono)">1</text>
+<rect x="331" y="165" width="28" height="28" rx="2" class="cell"/>
+<text x="345.0" y="184" class="ink2" font-size="11" text-anchor="middle" font-family="var(--mono)">2</text>
+<rect x="361" y="165" width="28" height="28" rx="2" class="cell"/>
+<text x="375.0" y="184" class="ink2" font-size="11" text-anchor="middle" font-family="var(--mono)">3</text>
+<rect x="391" y="165" width="28" height="28" rx="2" class="cell"/>
+<text x="405.0" y="184" class="ink2" font-size="11" text-anchor="middle" font-family="var(--mono)">4</text>
+<rect x="421" y="165" width="28" height="28" rx="2" class="cell"/>
+<text x="435.0" y="184" class="ink2" font-size="11" text-anchor="middle" font-family="var(--mono)">5</text>
+<rect x="451" y="165" width="28" height="28" rx="2" class="cell"/>
+<text x="465.0" y="184" class="ink2" font-size="11" text-anchor="middle" font-family="var(--mono)">6</text>
+<rect x="481" y="165" width="28" height="28" rx="2" class="cell"/>
+<text x="495.0" y="184" class="ink2" font-size="11" text-anchor="middle" font-family="var(--mono)">7</text>
+<rect x="511" y="165" width="28" height="28" rx="2" class="cell"/>
+<text x="525.0" y="184" class="ink2" font-size="11" text-anchor="middle" font-family="var(--mono)">8</text>
+<rect x="541" y="165" width="28" height="28" rx="2" class="cell"/>
+<text x="555.0" y="184" class="ink2" font-size="11" text-anchor="middle" font-family="var(--mono)">9</text>
+<rect x="571" y="165" width="28" height="28" rx="2" class="cell"/>
+<text x="585.0" y="184" class="ink2" font-size="11" text-anchor="middle" font-family="var(--mono)">10</text>
+<rect x="601" y="165" width="28" height="28" rx="2" class="cell"/>
+<text x="615.0" y="184" class="ink2" font-size="11" text-anchor="middle" font-family="var(--mono)">11</text>
+<rect x="631" y="165" width="28" height="28" rx="2" class="cell"/>
+<text x="645.0" y="184" class="ink2" font-size="11" text-anchor="middle" font-family="var(--mono)">12</text>
+<rect x="661" y="165" width="28" height="28" rx="2" class="cell"/>
+<text x="675.0" y="184" class="ink2" font-size="11" text-anchor="middle" font-family="var(--mono)">13</text>
+<rect x="691" y="165" width="28" height="28" rx="2" class="cell"/>
+<text x="705.0" y="184" class="ink2" font-size="11" text-anchor="middle" font-family="var(--mono)">14</text>
+<rect x="721" y="165" width="28" height="28" rx="2" class="cell"/>
+<text x="735.0" y="184" class="ink2" font-size="11" text-anchor="middle" font-family="var(--mono)">15</text>
+<path d="M285.0,198 L285.0,212 L645.0,212 L645.0,198" class="loop"/>
+<text x="465.0" y="234" class="path" font-size="12.5" text-anchor="middle" font-weight="700">the same replica's next trial: 16 clocks later</text>
+<text x="285.0" y="234" class="ink3" font-size="11" text-anchor="middle">4: S4 writes</text>
+<text x="645.0" y="234" class="ink3" font-size="11" text-anchor="middle">16: S0 reads</text>
+</svg><!--/FIG--></div>
+    <figcaption>
+      <b>A replica's next trial comes 16 clocks later.</b> Replica 0 (dark) finishes writing at clock 4 and comes back to
+      read at clock 16. For every replica, its own write finishes before its next read. The read-before-write hazards
+      that pipelines are prone to simply cannot happen in this arrangement.
+    </figcaption>
+  </figure>
+
+  <h3>Idea 2: all replicas work on the same vertex, and colours are stored as one word per vertex</h3>
+  <p>
+    Since vertices are visited in order, all replicas work on the same vertex v for 16 clocks. Call those 16 clocks a
+    <b>window</b>. During a window the colours of v's neighbours do not change: only v changes, and v is not its own
+    neighbour.
+  </p>
+  <p>
+    So the colouring is kept in BRAM as <b>one word per vertex holding that vertex's colour in every replica</b>. Bit p is
+    the colour in replica p. Four word reads at the start of a window then give the neighbours' colours for all replicas.
+    That is a few reads per 16 clocks, and adding lanes only makes the word wider, so <b>a single BRAM port is
+    enough</b>.
+  </p>
+
+  <figure>
+    <div class="fig-scroll"><!--FIG:window--><svg viewBox="0 0 760 360" role="img" aria-label="Top: the word of one vertex. Bit p is the colour in replica p; lane 0 uses bits 0 to 15 and lane 47 bits 752 to 767. Bottom: the schedule within a window. For 16 clocks all lanes try vertex v. Meanwhile, at time 0 the neighbour list of v+1 is read, at time 3 the word of v−1 is written back, at times 4 to 8 the neighbour words of v+1 and the word of v+1 are read, and at times 7 to 11 they are captured. Everything is swapped at time 15.">
+<text x="204" y="42" class="ink2" font-size="12" text-anchor="end">word of vertex u (one BRAM row)</text>
+<text x="204" y="60" class="ink3" font-size="11.5" text-anchor="end">bit p = colour in replica p</text>
+<rect x="215" y="30" width="18" height="26" rx="2" class="v0"/>
+<rect x="235" y="30" width="18" height="26" rx="2" class="v1"/>
+<rect x="255" y="30" width="18" height="26" rx="2" class="v0"/>
+<rect x="275" y="30" width="18" height="26" rx="2" class="v0"/>
+<rect x="295" y="30" width="18" height="26" rx="2" class="v1"/>
+<rect x="315" y="30" width="18" height="26" rx="2" class="v0"/>
+<rect x="335" y="30" width="18" height="26" rx="2" class="v1"/>
+<rect x="355" y="30" width="18" height="26" rx="2" class="v0"/>
+<rect x="375" y="30" width="18" height="26" rx="2" class="v0"/>
+<rect x="395" y="30" width="18" height="26" rx="2" class="v1"/>
+<rect x="415" y="30" width="18" height="26" rx="2" class="v0"/>
+<rect x="435" y="30" width="18" height="26" rx="2" class="v1"/>
+<rect x="455" y="30" width="18" height="26" rx="2" class="v0"/>
+<rect x="475" y="30" width="18" height="26" rx="2" class="v0"/>
+<rect x="495" y="30" width="18" height="26" rx="2" class="v1"/>
+<text x="524.0" y="48" class="ink3" font-size="13" text-anchor="middle">…</text>
+<rect x="535" y="30" width="18" height="26" rx="2" class="v1"/>
+<rect x="555" y="30" width="18" height="26" rx="2" class="v0"/>
+<rect x="575" y="30" width="18" height="26" rx="2" class="v0"/>
+<rect x="595" y="30" width="18" height="26" rx="2" class="v1"/>
+<rect x="615" y="30" width="18" height="26" rx="2" class="v0"/>
+<rect x="635" y="30" width="18" height="26" rx="2" class="v1"/>
+<line x1="214" y1="66" x2="512" y2="66" class="brace"/><text x="364.0" y="82" class="ink3" font-size="11.5" text-anchor="middle">lane 0 (bits 0–15)</text>
+<line x1="536" y1="66" x2="654" y2="66" class="brace"/><text x="594" y="82" class="ink3" font-size="11.5" text-anchor="middle">… lane 47 (752–767)</text>
+<text x="246.0" y="118" class="ink3" font-size="11" text-anchor="middle" font-family="var(--mono)">0</text>
+<text x="278.0" y="118" class="ink3" font-size="11" text-anchor="middle" font-family="var(--mono)">1</text>
+<text x="310.0" y="118" class="ink3" font-size="11" text-anchor="middle" font-family="var(--mono)">2</text>
+<text x="342.0" y="118" class="ink3" font-size="11" text-anchor="middle" font-family="var(--mono)">3</text>
+<text x="374.0" y="118" class="ink3" font-size="11" text-anchor="middle" font-family="var(--mono)">4</text>
+<text x="406.0" y="118" class="ink3" font-size="11" text-anchor="middle" font-family="var(--mono)">5</text>
+<text x="438.0" y="118" class="ink3" font-size="11" text-anchor="middle" font-family="var(--mono)">6</text>
+<text x="470.0" y="118" class="ink3" font-size="11" text-anchor="middle" font-family="var(--mono)">7</text>
+<text x="502.0" y="118" class="ink3" font-size="11" text-anchor="middle" font-family="var(--mono)">8</text>
+<text x="534.0" y="118" class="ink3" font-size="11" text-anchor="middle" font-family="var(--mono)">9</text>
+<text x="566.0" y="118" class="ink3" font-size="11" text-anchor="middle" font-family="var(--mono)">10</text>
+<text x="598.0" y="118" class="ink3" font-size="11" text-anchor="middle" font-family="var(--mono)">11</text>
+<text x="630.0" y="118" class="ink3" font-size="11" text-anchor="middle" font-family="var(--mono)">12</text>
+<text x="662.0" y="118" class="ink3" font-size="11" text-anchor="middle" font-family="var(--mono)">13</text>
+<text x="694.0" y="118" class="ink3" font-size="11" text-anchor="middle" font-family="var(--mono)">14</text>
+<text x="726.0" y="118" class="ink3" font-size="11" text-anchor="middle" font-family="var(--mono)">15</text>
+<text x="220" y="118" class="ink3" font-size="11" text-anchor="end">time o within the window</text>
+<text x="220" y="149" class="ink2" font-size="11.5" text-anchor="end">all lanes try vertex v</text>
+<rect x="231" y="133" width="510" height="24" rx="3" class="bar-tri"/>
+<text x="220" y="183" class="ink2" font-size="11.5" text-anchor="end">read v+1's neighbour list</text>
+<rect x="231" y="167" width="30" height="24" rx="3" class="bar-path"/>
+<text x="220" y="217" class="ink2" font-size="11.5" text-anchor="end">write back v−1's word</text>
+<rect x="327" y="201" width="62" height="24" rx="3" class="bar-ddr"/>
+<text x="220" y="251" class="ink2" font-size="11.5" text-anchor="end">read 4 neighbour words + v+1's word</text>
+<rect x="359" y="235" width="158" height="24" rx="3" class="bar-path"/>
+<text x="220" y="285" class="ink2" font-size="11.5" text-anchor="end">capture (if a neighbour is v: register)</text>
+<rect x="455" y="269" width="158" height="24" rx="3" class="bar-path"/>
+<line x1="742" y1="128" x2="742" y2="302" class="edge"/>
+<text x="738" y="320" class="ink2" font-size="11.5" text-anchor="end">swap at boundary →</text>
+</svg><!--/FIG--></div>
+    <figcaption>
+      <b>Prepare the next window during this one.</b> While vertex v is being tried, the neighbour words of the next
+      vertex, v+1, are prefetched from BRAM. One of v+1's neighbours may be v itself. Its colours are still changing, so
+      they are taken straight from the register being updated instead of from BRAM (forwarding). The previous vertex,
+      v−1, is written back before anything reads it.
+    </figcaption>
+  </figure>
+
+  <h3>Idea 3: per-replica state in LUT memory, exp replaced by a table lookup</h3>
+  <p>
+    Each replica's random state (64 bits), cut value, best value and the trial at which the best was found live in
+    LUTRAM, LUTs used as small memories. The acceptance test needs only two 32-bit comparators (for n<sub>same</sub> = 0
+    and 1) and a little logic.
+  </p>
+
+  <h3>How it was checked</h3>
+  <ul>
+    <li><b>Simulation:</b> four jobs back to back, with random gaps in the input and back-pressure on the output.
+      Every returned word (each replica's best value, its trial number, the final colouring and so on) matches the CPU
+      version, for 1, 2, 4, 8 and 48 lanes.</li>
+    <li><b>Breaking it on purpose:</b> disabling forwarding, delaying the write-back by one clock, or capturing the
+      prefetched words one clock early all produce mismatches, as they should. This confirms the test does not miss
+      real errors.</li>
+    <li><b>On the board:</b> the CPU version on the board generates the expected values, and every word from the
+      circuit is compared with them. All match for 1, 2, 4, 8, 16, 32 and 48 lanes.</li>
+  </ul>
+
+  <h3>How many lanes fit</h3>
+  <p>More lanes means that many trials per clock. Lanes were added until the XC7Z020 was full (125 MHz; resources
+    include the DMA and the rest of the design).</p>
+
+  <div class="tbl-scroll">
+  <table>
+    <thead><tr><th>lanes</th><th>replicas</th><th>LUTs</th><th>BRAM</th><th>timing slack</th><th>trials/s (board)</th></tr></thead>
+    <tbody>
+      <tr><td>1</td><td>16</td><td>6,172</td><td>16.5</td><td>+0.196 ns</td><td>1.25 × 10<sup>8</sup></td></tr>
+      <tr><td>8</td><td>128</td><td>11,352</td><td>29</td><td>+0.294 ns</td><td>1.00 × 10<sup>9</sup></td></tr>
+      <tr><td>16</td><td>256</td><td>17,318</td><td>43</td><td>+0.070 ns</td><td>2.00 × 10<sup>9</sup></td></tr>
+      <tr><td>32</td><td>512</td><td>31,395</td><td>71.5</td><td>+0.285 ns</td><td>4.00 × 10<sup>9</sup></td></tr>
+      <tr class="hit"><td><strong>48</strong></td><td>768</td><td>44,652 (84%)</td><td>100</td><td>+0.124 ns</td><td><strong>6.00 × 10<sup>9</sup></strong></td></tr>
+      <tr><td>64</td><td>1,024</td><td colspan="4" class="t">placement fails (out of slices)</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <div class="callout fix">
+    <span class="label">What ran out first</span>
+    <p>
+      At 48 lanes, timing failed first. The cause was not the annealing logic but routing congestion in the control
+      signals for loading, which fan out to every lane. Registering those signals once inside each lane fixed it. At
+      64 lanes the placer ran out of slices, the space the circuit is placed in. One lane uses about 600 LUTs, roughly
+      40% of them LUTRAM holding per-replica state.
+    </p>
+  </div>
+</section>
+
+<!-- ============================================================ -->
+<section id="s5">
+  <h2><span class="n">05</span><span>Result: the M4 is faster</span></h2>
+  <p class="sub">same algorithm, same results, different speed</p>
+
+  <p>
+    The comparison is against a version of the same algorithm made as fast as possible for CPUs (<code>sa_fast.c</code>).
+    It gives bit-identical results to the circuit. Trials per second are compared on the n = 1024 4-regular graph with
+    the standard schedule.
+  </p>
+
+  <figure>
+    <div class="fig-scroll"><!--FIG:bars--><svg viewBox="0 0 760 290" role="img" aria-label="Trials per second on a log scale. Cortex-A9 × 2 plain version 1.95 × 10^7, Cortex-A9 × 2 sa_fast 1.12 × 10^8, FPGA 1 lane 1.25 × 10^8, M4 10 cores plain version 2.32 × 10^9, FPGA 48 lanes 6.0 × 10^9, M4 10 cores sa_fast 2.98 × 10^10.">
+<line x1="250.0" y1="20" x2="250.0" y2="242" class="grid"/>
+<text x="250.0" y="260" class="ink3" font-size="11" text-anchor="middle" font-family="var(--mono)">10<tspan dy="-5" font-size="8">7</tspan></text>
+<line x1="367.5" y1="20" x2="367.5" y2="242" class="grid"/>
+<text x="367.5" y="260" class="ink3" font-size="11" text-anchor="middle" font-family="var(--mono)">10<tspan dy="-5" font-size="8">8</tspan></text>
+<line x1="485.0" y1="20" x2="485.0" y2="242" class="grid"/>
+<text x="485.0" y="260" class="ink3" font-size="11" text-anchor="middle" font-family="var(--mono)">10<tspan dy="-5" font-size="8">9</tspan></text>
+<line x1="602.5" y1="20" x2="602.5" y2="242" class="grid"/>
+<text x="602.5" y="260" class="ink3" font-size="11" text-anchor="middle" font-family="var(--mono)">10<tspan dy="-5" font-size="8">10</tspan></text>
+<line x1="720.0" y1="20" x2="720.0" y2="242" class="grid"/>
+<text x="720.0" y="260" class="ink3" font-size="11" text-anchor="middle" font-family="var(--mono)">10<tspan dy="-5" font-size="8">11</tspan></text>
+<text x="240" y="48" class="ink2" font-size="12.5" text-anchor="end">Cortex-A9 × 2 · sa (plain)</text>
+<rect x="250" y="33" width="34.1" height="22" rx="2" class="b-cpu"/>
+<text x="292.1" y="48" class="ink2" font-size="11.5" font-family="var(--mono)">1.95 × 10<tspan dy="-5" font-size="8">7</tspan></text>
+<text x="240" y="84" class="ink2" font-size="12.5" text-anchor="end">Cortex-A9 × 2 · sa_fast</text>
+<rect x="250" y="69" width="123.3" height="22" rx="2" class="b-cpu"/>
+<text x="381.3" y="84" class="ink2" font-size="11.5" font-family="var(--mono)">1.12 × 10<tspan dy="-5" font-size="8">8</tspan></text>
+<text x="240" y="120" class="ink" font-size="12.5" text-anchor="end" font-weight="700">FPGA · 1 lane</text>
+<rect x="250" y="105" width="128.9" height="22" rx="2" class="b-fpga"/>
+<text x="386.9" y="120" class="ink2" font-size="11.5" font-family="var(--mono)">1.25 × 10<tspan dy="-5" font-size="8">8</tspan></text>
+<text x="240" y="156" class="ink2" font-size="12.5" text-anchor="end">M4 · 10 cores · sa (plain)</text>
+<rect x="250" y="141" width="277.9" height="22" rx="2" class="b-cpu"/>
+<text x="535.9" y="156" class="ink2" font-size="11.5" font-family="var(--mono)">2.32 × 10<tspan dy="-5" font-size="8">9</tspan></text>
+<text x="240" y="192" class="ink" font-size="12.5" text-anchor="end" font-weight="700">FPGA · 48 lanes</text>
+<rect x="250" y="177" width="326.4" height="22" rx="2" class="b-fpga"/>
+<text x="584.4" y="192" class="ink2" font-size="11.5" font-family="var(--mono)">6.00 × 10<tspan dy="-5" font-size="8">9</tspan></text>
+<text x="240" y="228" class="ink2" font-size="12.5" text-anchor="end">M4 · 10 cores · sa_fast</text>
+<rect x="250" y="213" width="408.2" height="22" rx="2" class="b-cpu"/>
+<text x="666.2" y="228" class="ink2" font-size="11.5" font-family="var(--mono)">2.98 × 10<tspan dy="-5" font-size="8">10</tspan></text>
+<text x="485.0" y="282" class="ink3" font-size="11.5" text-anchor="middle">trials per second (log scale)</text>
+</svg><!--/FIG--></div>
+    <figcaption>
+      <b>Trials per second (log scale, all measured).</b> The 48-lane FPGA is 54× faster than the same board's ARM
+      (2 cores, optimized), and one fifth of the M4 Mac mini (10 cores, optimized). All engines do the same search, so
+      the time to reach a target scales the same way.
+    </figcaption>
+  </figure>
+
+  <p class="keyline">54× faster than the CPU on the same board, 5× slower than a current one.</p>
+
+  <p>
+    The M4 is faster because of <b>bit-slicing</b>. The random states of 128 replicas are transposed into 64 words of
+    128 bits, where word b holds bit b of every replica's 64-bit state. Then the shifts and XORs of xorshift64 become XORs
+    between whole words, and one instruction advances the generators of 128 replicas. The acceptance test r &lt; TH can
+    also be decided on whole words, from the top bit down. The FPGA, in contrast, spends one lane (about 600 LUTs) per
+    trial per clock. This is also a 28 nm FPGA from 2012 against a 3 nm CPU from 2024. Matching the M4 at 125 MHz would
+    take about 240 lanes (estimate).
+  </p>
+  <p>Next steps:</p>
+  <ul>
+    <li><b>Energy per trial.</b> The board draws a few watts and the Mac mini a few tens of watts under load, so the
+      comparison may come out differently there (not measured yet).</li>
+    <li>Compare time to target on the toroidal graphs of the G-set benchmark (G48–G50).</li>
+    <li>Replica exchange, which only needs the assignment of threshold tables to replicas to be swapped.</li>
+  </ul>
+</section>
+
+<section>
+  <h2><span class="n">—</span><span>References</span></h2>
+  <ul class="refs">
+    <li>R. M. Karp, “Reducibility among combinatorial problems,” 1972.</li>
+    <li>J. Håstad, “Some optimal inapproximability results,” <i>J. ACM</i> 48(4), 2001.</li>
+    <li>M. X. Goemans, D. P. Williamson, “Improved approximation algorithms for maximum cut and satisfiability problems using semidefinite programming,” <i>J. ACM</i> 42(6), 1995.</li>
+    <li>S. Khot, G. Kindler, E. Mossel, R. O’Donnell, “Optimal inapproximability results for MAX-CUT and other 2-variable CSPs?,” <i>SIAM J. Comput.</i> 37(1), 2007.</li>
+    <li>N. Metropolis et al., “Equation of state calculations by fast computing machines,” <i>J. Chem. Phys.</i> 21, 1953.</li>
+    <li>S. Kirkpatrick, C. D. Gelatt, M. P. Vecchi, “Optimization by simulated annealing,” <i>Science</i> 220, 1983.</li>
+    <li>S. Burer, R. D. C. Monteiro, Y. Zhang, “Rank-two relaxation heuristics for MAX-CUT and other binary quadratic programs,” <i>SIAM J. Optim.</i> 12(2), 2002.</li>
+    <li>U. Benlic, J.-K. Hao, “Breakout local search for the max-cut problem,” <i>Eng. Appl. Artif. Intell.</i> 26(3), 2013.</li>
+    <li>C. Helmberg, F. Rendl, “A spectral bundle method for semidefinite programming,” <i>SIAM J. Optim.</i> 10(3), 2000. (G-set)</li>
+    <li>G. Marsaglia, “Xorshift RNGs,” <i>J. Stat. Softw.</i> 8(14), 2003.</li>
+    <li>T. Inagaki et al., “A coherent Ising machine for 2000-node optimization problems,” <i>Science</i> 354, 2016.</li>
+    <li>M. Aramon et al., “Physics-inspired optimization for quadratic unconstrained problems using a digital annealer,” <i>Front. Phys.</i> 7, 2019.</li>
+    <li>H. Goto, K. Tatsumura, A. R. Dixon, “Combinatorial optimization by simulating adiabatic bifurcations in nonlinear Hamiltonian systems,” <i>Sci. Adv.</i> 5, 2019.</li>
+  </ul>
+</section>
+
+<footer>
+  <p>
+    Implementation, measurement notes and how to try it: <a href="https://github.com/tsjshg/fpga-max-cut">github.com/tsjshg/fpga-max-cut</a>.
+    Tooling for building circuits: <a href="https://github.com/tsjshg/fpga-mac">fpga-mac</a>.
+    Previous project (a ternary language model on the PYNQ-Z1): <a href="https://tsjshg.github.io/fpga-pynq-z1/">development journal</a>.
+  </p>
+  <p>2026-10-10 · BSD 3-Clause</p>
+</footer>
+
+</div>
+</body>
+</html>
