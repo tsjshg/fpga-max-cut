@@ -33,6 +33,12 @@ Random 4-regular graph, n = 1024 (2048 edges), 1000 sweeps per run. All numbers 
   advances 128 xorshift64 generators at once. The FPGA spends about 450 LUTs per lane to do one
   trial per clock, and the XC7Z020 (28 nm, 2012) is at 90% of its slices with 56 lanes. Matching the M4
   (3 nm, 2024) at 125 MHz would take about 240 lanes (estimate).
+- **Time to target (TTS99, M4).** On the hard target (G50, cut 5872), the FPGA needs 8.1 s, the M4
+  2.0 s and the Cortex-A9 211 s, so the ratios follow throughput. On easy targets (G48/G49 at their
+  optimum 6000, the random graph at 1774), one short run of 100 sweeps is enough on every engine. Then
+  the length of one run decides it, and the FPGA is only about 2× slower than the M4. The FPGA's run
+  time is n × 16 clocks per sweep and does not shrink with fewer replicas. Details in
+  [`docs/m4.md`](docs/m4.md).
 - **Energy per trial has not been measured yet.** The board draws a few watts and the Mac mini a
   few tens of watts under load, so the comparison may come out differently there.
 
@@ -177,7 +183,7 @@ reference on the board takes about 50 s to produce the expected values for 896 r
 | M2 | bit-exact on the board, trials/s | done |
 | M3 | scaling the number of lanes, then trimming each lane | done ([docs/m3.md](docs/m3.md)) |
 | — | optimized CPU version | done ([docs/cpu-fast.md](docs/cpu-fast.md)) |
-| M4 | time-to-target (TTS99) comparison; G-set G48–G50 | next |
+| M4 | time-to-target (TTS99) comparison; G-set G48–G50 | done ([docs/m4.md](docs/m4.md)) |
 | | energy per trial | waiting for a power meter |
 | M5 | replica exchange | later |
 

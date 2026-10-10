@@ -876,11 +876,33 @@
     trial per clock. This is also a 28 nm FPGA from 2012 against a 3 nm CPU from 2024. Matching the M4 at 125 MHz would
     take about 240 lanes (estimate).
   </p>
+  <h3>Comparing time to target (TTS99)</h3>
+  <p>
+    Time to target was also compared on the toroidal graphs of the G-set benchmark (3000 vertices, 6000 edges,
+    degree 4). G48 and G49 are bipartite, so cutting all 6000 edges is optimal. For G50, the best-known value 5880 was
+    reached by just 1 of 1,024 replicas in a long run of 100,000 sweeps. TTS99, with the run length τ chosen per engine
+    to make it smallest (measured; <a href="https://github.com/tsjshg/fpga-max-cut/blob/main/docs/m4.md">full tables</a>):
+  </p>
+  <div class="tbl-scroll">
+  <table>
+    <thead><tr><th>problem</th><th>target</th><th>FPGA, 56 lanes</th><th>M4, 10 cores</th><th>A9, 2 cores</th><th>FPGA / M4</th></tr></thead>
+    <tbody>
+      <tr><td>G49</td><td>6000 (optimal)</td><td>40 ms</td><td>20 ms</td><td>0.83 s</td><td>2.0× slower</td></tr>
+      <tr><td>G50</td><td>5868</td><td>2.6 s</td><td>0.69 s</td><td>70 s</td><td>3.8× slower</td></tr>
+      <tr class="hit"><td>G50</td><td>5872</td><td><strong>8.1 s</strong></td><td>2.0 s</td><td>211 s</td><td>4.1× slower</td></tr>
+    </tbody>
+  </table>
+  </div>
+  <p>
+    On hard targets the ratios follow throughput. On easy ones, every engine reaches the target with more than 99%
+    probability in one short run of 100 sweeps, so <b>the length of a single run</b> decides it. One FPGA sweep takes
+    (number of vertices) × 16 clocks no matter how many lanes there are (more lanes only add replicas), and the gap to
+    the M4 shrinks to about 2×.
+  </p>
   <p>Next steps:</p>
   <ul>
     <li><b>Energy per trial.</b> The board draws a few watts and the Mac mini a few tens of watts under load, so the
       comparison may come out differently there (not measured yet).</li>
-    <li>Compare time to target on the toroidal graphs of the G-set benchmark (G48–G50).</li>
     <li>Replica exchange, which only needs the assignment of threshold tables to replicas to be swapped.</li>
   </ul>
 </section>

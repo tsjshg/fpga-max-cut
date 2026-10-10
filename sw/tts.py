@@ -38,6 +38,7 @@ def main():
     ap.add_argument("--seed", type=int, default=1)
     ap.add_argument("--extra", default="")
     ap.add_argument("-j", type=int, default=os.cpu_count())
+    ap.add_argument("--sa", default=os.path.join(HERE, "sa_fast"), help="sa か sa_fast（結果は同じ）")
     a = ap.parse_args()
     with open(a.graph) as f:
         line = f.readline()
@@ -53,7 +54,7 @@ def main():
         subprocess.run([sys.executable, os.path.join(HERE, "make_sched.py"), str(d), "--T0", str(a.T0),
                         "--T1", str(a.T1), "--stages", str(stages), "--sweeps", str(total // stages),
                         "-o", path], check=True)
-        out = subprocess.run([os.path.join(HERE, "sa"), "-g", a.graph, "-s", path, "-R", str(a.R),
+        out = subprocess.run([a.sa, "-g", a.graph, "-s", path, "-R", str(a.R),
                               "-S", str(a.seed), "-j", str(a.j), "-q", "-t", str(a.target)]
                              + a.extra.split(), check=True, capture_output=True, text=True).stdout
         os.unlink(path)
