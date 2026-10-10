@@ -2,33 +2,34 @@
 #  PYNQ-Z1 (XC7Z020) ひな形: DMA で DDR → 自作回路 → DDR
 #
 #    PS7 -M_AXI_GP0-> AXI Interconnect -> AXI DMA（制御レジスタ）
-#    DDR -HP0-> SmartConnect -> DMA MM2S -> axis_cumsum -> DMA S2MM -> SmartConnect -HP0-> DDR
+#    DDR -HP0-> SmartConnect -> DMA MM2S -> mc_core -> DMA S2MM -> SmartConnect -HP0-> DDR
 #
 #  使い方（hw/ で）:
-#    vivado.sh build build.tcl bd  [FCLK MHz]   ブロックデザインの検証だけ（1分弱）
-#    vivado.sh build build.tcl all [FCLK MHz]   合成〜ビットストリーム（10分前後）
+#    vivado.sh build build.tcl bd  [FCLK MHz] [K] [jobs]   ブロックデザインの検証だけ（1分弱）
+#    vivado.sh build build.tcl all [FCLK MHz] [K] [jobs]   合成〜ビットストリーム（10分前後）
+#  K はレーンの数（レプリカは 16·K 個。M1 は K ≤ 4）。jobs は launch_runs の並列数で、
+#  Docker（15 GB）では 2、Mac mini（31 GiB・ビルド専用機）では 8 にする。
 #  必ず bd を先に通す。いきなり all で落ちると数分無駄になる。
 #  できたものは out/<tag>.bit と out/<tag>.hwh（PYNQ は同じ basename の2つを読む）。
 #
-#  自分の回路にするときに触るところ:
-#    - rtl/ のファイル名とモジュール名（add_files と create_bd_cell）
-#    - DMA の幅（入出力の幅が違うなら c_s_axis_s2mm_tdata_width など）
-#    - 帯域が要るなら hp_ports を {0 2} にして DMA を2組（HP0/HP1 は PS 側で対なので避ける）
 # =====================================================================
 set stage [expr {$argc > 0 ? [lindex $argv 0] : "bd"}]
-set fclk  [expr {$argc > 1 ? [lindex $argv 1] : 100}]
+set fclk  [expr {$argc > 1 ? [lindex $argv 1] : 125}]
+set lanes [expr {$argc > 2 ? [lindex $argv 2] : 1}]
+set jobs  [expr {$argc > 3 ? [lindex $argv 3] : 2}]
+set_param general.maxThreads [expr {$jobs > 8 ? 8 : $jobs}]
 set hp_ports {0}
 
 set part   xc7z020clg400-1
-set tag    cumsum${fclk}
+set tag    mc${fclk}_k${lanes}
 set proj   prj_$tag
 set bd     design_1
 set outdir [file normalize ./out]
 file mkdir $outdir
-puts "### stage = $stage / FCLK = $fclk MHz"
+puts "### stage = $stage / FCLK = $fclk MHz / K = $lanes / jobs = $jobs"
 
 create_project $proj ./$proj -part $part -force
-add_files -norecurse ./rtl/axis_cumsum.v
+add_files -norecurse [list ./rtl/mc_lane.v ./rtl/mc_core.v]
 update_compile_order -fileset sources_1
 create_bd_design $bd
 
@@ -56,7 +57,9 @@ set_property -dict [list \
 ] $dma
 
 # ---------- 自作回路 ----------
-set core [create_bd_cell -type module -reference axis_cumsum core_0]
+set core [create_bd_cell -type module -reference mc_core core_0]
+set kw [expr {$lanes > 1 ? int(ceil(log($lanes) / log(2))) : 1}]
+set_property -dict [list CONFIG.K $lanes CONFIG.KW $kw] $core
 connect_bd_intf_net [get_bd_intf_pins axi_dma_0/M_AXIS_MM2S] [get_bd_intf_pins core_0/s_axis]
 connect_bd_intf_net [get_bd_intf_pins core_0/m_axis]         [get_bd_intf_pins axi_dma_0/S_AXIS_S2MM]
 
@@ -106,8 +109,8 @@ add_files -norecurse ./$proj/$proj.gen/sources_1/bd/$bd/hdl/${bd}_wrapper.v
 set_property top ${bd}_wrapper [current_fileset]
 update_compile_order -fileset sources_1
 
-# -jobs は 2。Vivado は IP ごとに約 2.8 GB のプロセスを立てるので、8 だと OOM で殺される。
-launch_runs impl_1 -to_step write_bitstream -jobs 2
+# Vivado は IP ごとに約 2.8 GB のプロセスを立てる。Docker（15 GB）で 8 にすると OOM で殺される。
+launch_runs impl_1 -to_step write_bitstream -jobs $jobs
 wait_on_run impl_1
 if {[get_property PROGRESS [get_runs impl_1]] != "100%"} { puts "### implementation failed"; exit 1 }
 

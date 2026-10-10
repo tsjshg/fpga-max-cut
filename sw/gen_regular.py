@@ -39,6 +39,18 @@ def random_regular(n, d, seed):
     raise RuntimeError("やり直しの回数が上限に達した")
 
 
+def circulant(n, offsets):
+    """頂点 v を v±s（s ∈ offsets）とつないだ循環グラフ。次数は 2·len(offsets)。
+    v が必ず v−1 とつながるので、回路の「直前の窓の頂点を FWD で読む」経路を毎回通る試験に使う。"""
+    adj = []
+    for v in range(n):
+        nb = {(v + s) % n for s in offsets} | {(v - s) % n for s in offsets}
+        if len(nb) != 2 * len(offsets) or v in nb:
+            raise ValueError("n が小さすぎて多重辺か自己ループになる")
+        adj.append(sorted(nb))
+    return adj
+
+
 def write_adj(f, adj, d, comment):
     f.write(f"# {comment}\n")
     f.write(f"{len(adj)} {d}\n")
@@ -51,10 +63,18 @@ def main():
     ap.add_argument("n", type=int)
     ap.add_argument("d", type=int)
     ap.add_argument("--seed", type=int, default=1)
+    ap.add_argument("--circulant", help="ランダムでなく循環グラフにする。例: 1,2（d は 2×個数）")
     ap.add_argument("-o", "--out", help="書き出し先（省略時は標準出力）")
     a = ap.parse_args()
-    adj, tries = random_regular(a.n, a.d, a.seed)
-    comment = f"random {a.d}-regular graph n={a.n} seed={a.seed} (gen_regular.py, {tries} tries)"
+    if a.circulant:
+        offs = [int(x) for x in a.circulant.split(",")]
+        if 2 * len(offs) != a.d:
+            sys.exit("d は --circulant の個数の 2 倍")
+        adj, tries = circulant(a.n, offs), 0
+        comment = f"circulant graph n={a.n} offsets={a.circulant} (gen_regular.py)"
+    else:
+        adj, tries = random_regular(a.n, a.d, a.seed)
+        comment = f"random {a.d}-regular graph n={a.n} seed={a.seed} (gen_regular.py, {tries} tries)"
     if a.out:
         with open(a.out, "w") as f:
             write_adj(f, adj, a.d, comment)

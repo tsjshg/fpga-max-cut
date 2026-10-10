@@ -14,7 +14,9 @@ hw/.Xil/
 hw/*.log
 hw/*.jou
 hw/*.str
-hw/sim/work/
+hw/sim/work*/
 # 生成物。公開するビットストリームだけ git add -f で入れる
 hw/out/
 __pycache__/
+# sw/mkvec.py が作る xsim の照合ベクタ（いつでも作り直せる）
+hw/sim/vec_k*/
