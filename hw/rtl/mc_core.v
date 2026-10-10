@@ -86,8 +86,21 @@ module mc_core #(
   // ---------------- メモリ ----------------
   (* ram_style = "block" *) reg [W-1:0]    col_mem [0:NMAX-1];
   (* ram_style = "block" *) reg [4*NW-1:0] adj_mem [0:NMAX-1];
+  // 温度の表。書き口 1・読み口 1（番地はレジスタ）にして、LUTRAM に載るようにする。
+  // 読み番地は「次に切り替える段」。段は n 窓以上続くので、切り替えの時には読み終わっている。
   (* ram_style = "distributed" *) reg [31:0] sw_mem [0:SMAX-1];
   (* ram_style = "distributed" *) reg [63:0] th_mem [0:SMAX-1];
+  wire          sch_we = beat && (lsec == L_SCHED);
+  wire [SW-1:0] sch_wa = lcnt[SW:1];
+  reg  [SW-1:0] sch_ra;
+  reg  [31:0]   sch_sw;
+  reg  [63:0]   sch_th;
+  always @(posedge aclk) begin
+    if (sch_we && !lcnt[0]) sw_mem[sch_wa] <= din[31:0];
+    if (sch_we &&  lcnt[0]) th_mem[sch_wa] <= din;
+    sch_sw <= sw_mem[sch_ra];
+    sch_th <= th_mem[sch_ra];
+  end
 
   reg          col_we;
   reg [NW-1:0] col_wa;
@@ -263,9 +276,7 @@ module mc_core #(
             lcnt <= (lcnt == R - 1) ? 16'd0 : lcnt + 1;
             if (lcnt == R - 1) lsec <= L_SCHED;
           end
-          default: begin // L_SCHED
-            if (lcnt[0] == 1'b0) sw_mem[lcnt[SW:1]] <= din[31:0];
-            else                 th_mem[lcnt[SW:1]] <= din;
+          default: begin // L_SCHED（表への書き込みは上の always）
             lcnt <= lcnt + 1;
             if (lcnt == {s_reg[14:0], 1'b0} - 1) begin
               // 読み込み終わり。窓 -1（試行を流さず窓 0 の準備だけする）へ
@@ -279,6 +290,7 @@ module mc_core #(
               curbuf <= 1'b0;
               stage <= 0;
               sweep_cnt <= 0;
+              sch_ra <= 0;
             end
           end
         endcase
@@ -324,9 +336,10 @@ module mc_core #(
               cur_valid <= 1'b1;
               t_cur <= 48'd0;
               cycles <= 64'd0;
-              th0 <= th_mem[0][31:0];
-              th1 <= th_mem[0][63:32];
-              cur_sweeps <= sw_mem[0];
+              th0 <= sch_th[31:0];        // 窓 -1 の間ずっと番地 0 を読んでいる
+              th1 <= sch_th[63:32];
+              cur_sweeps <= sch_sw;
+              sch_ra <= 1;
             end
             ST_RUN: begin
               t_cur <= t_cur + 1;
@@ -338,9 +351,10 @@ module mc_core #(
                     cur_valid <= 1'b0;
                   end else begin
                     stage <= stage + 1;
-                    th0 <= th_mem[stage + 1][31:0];
-                    th1 <= th_mem[stage + 1][63:32];
-                    cur_sweeps <= sw_mem[stage + 1];
+                    th0 <= sch_th[31:0];      // = 段 stage+1
+                    th1 <= sch_th[63:32];
+                    cur_sweeps <= sch_sw;
+                    sch_ra <= stage + 2;
                   end
                 end else begin
                   sweep_cnt <= sweep_cnt + 1;
