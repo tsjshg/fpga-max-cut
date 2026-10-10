@@ -67,7 +67,9 @@ for r in range(a.rep):
     dst.invalidate()
     got = np.array(dst)
     bad = np.nonzero(got != want)[0]
-    cycles, WT = int(got[1]), int(got[2])
+    cycles, WT = int(got[1]), int(got[2]) & ((1 << 48) - 1)
+    if int(got[2]) >> 48 != a.K:
+        sys.exit(f"回路の K={int(got[2]) >> 48} と --K {a.K} が違う")
     trials = WT * a.K * P
     sec = cycles / (fclk * 1e6)
     print(f"run {r}: {'all %d words match' % len(want) if len(bad) == 0 else '%d words differ' % len(bad)}"

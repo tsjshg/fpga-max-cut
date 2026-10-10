@@ -52,8 +52,11 @@ module mc_core #(
   input  wire        m_axis_tready
 );
 
-  localparam W = K * P;     // 塗り分けの語の幅（M1 は 64 以下）
-  localparam R = K * P;     // レプリカの数
+  localparam W  = K * P;    // 塗り分けの語の幅
+  localparam R  = K * P;    // レプリカの数
+  localparam CB = (W + 63) / 64;   // 塗り分けの語1つを送るビート数（ビート b = ビット 64b..64b+63）
+  localparam WC = CB * 64;
+  localparam CBW = (CB > 1) ? $clog2(CB) : 1;
 
   // 窓の中の先読みの時刻（docs/m1-design.md の時刻表）。
   // BRAM は「時刻 o に読み番地のレジスタへ載せる → o+1 で読む → o+2 で rd1 → o+3 で rd2 が見える」。
@@ -64,6 +67,7 @@ module mc_core #(
   localparam O_RD0  = 4;    // 隣 0..D-1 の番地を載せる（4..7、o=5.. で読む）、続いて次の頂点（8）
   localparam O_GET0 = 7;    // 読んだ語を受け取る（7..10、11）
   localparam [7:0] P8 = P;
+  localparam [15:0] K16 = K;
 
   // ---------------- 状態 ----------------
   localparam ST_LOAD = 3'd0, ST_PRE = 3'd1, ST_RUN = 3'd2, ST_POST = 3'd3, ST_OUT = 3'd4;
@@ -106,6 +110,17 @@ module mc_core #(
   reg [NW-1:0] col_wa;
   reg [W-1:0]  col_wd;
   reg [NW-1:0] col_ra;
+  // 読み込みで塗り分けの語を組み立てる（ビート 0 が下位）
+  reg [CBW-1:0] lcs;
+  reg [WC-1:0]  colacc;
+  wire [WC-1:0] colnext;
+  generate
+    if (CB == 1) begin : cn1
+      assign colnext = din;
+    end else begin : cnn
+      assign colnext = {din, colacc[WC-1:64]};
+    end
+  endgenerate
   reg [W-1:0]  col_rd1, col_rd2;
   always @(posedge aclk) begin
     if (col_we) col_mem[col_wa] <= col_wd;
@@ -125,7 +140,8 @@ module mc_core #(
   end
 
   // ---------------- 窓の制御 ----------------
-  reg [JW-1:0] o;                 // 窓の中の時刻 = 今 S0 に入るスロット
+  (* max_fanout = 32 *)
+  reg [JW-1:0] o;                 // 窓の中の時刻 = 今 S0 に入るスロット（全レーンの選択に配る）
   reg [NW-1:0] vprev, vcur, vnext;
   reg          cur_valid, prev_valid;
   reg [47:0]   t_cur;
@@ -141,8 +157,7 @@ module mc_core #(
   reg [31:0]   th0, th1;
   reg [63:0]   cycles;
 
-  wire [W-1:0] own_cur  = curbuf ? own1 : own0;
-  wire [W-1:0] own_prev = curbuf ? own0 : own1;
+  wire [W-1:0] own_prev = curbuf ? own0 : own1;   // 書き戻し用（o = O_WB でだけ使う）
   wire win_end = (o == P - 1);
   wire in_win  = (state == ST_PRE) || (state == ST_RUN) || (state == ST_POST);
 
@@ -163,15 +178,21 @@ module mc_core #(
   genvar gk, gi;
   generate
     for (gk = 0; gk < K; gk = gk + 1) begin : lane
+      // レーン k のスロット o のビットだけを先に選び、それから OWN の 0/1 を選ぶ
+      // （W bit の語ごと選んでからビットを選ぶと、curbuf が W 個の選択に広がるため）
+      wire own0b = own0[gk*P + o];
+      wire own1b = own1[gk*P + o];
+      wire ownc  = curbuf ? own1b : own0b;
+      wire ownp  = curbuf ? own0b : own1b;
       wire [D-1:0] nbbits;
       for (gi = 0; gi < D; gi = gi + 1) begin : nbsel
-        assign nbbits[gi] = fwd[gi] ? own_prev[gk*P + o] : nb[gi][gk*P + o];
+        assign nbbits[gi] = fwd[gi] ? ownp : nb[gi][gk*P + o];
       end
       wire kmatch = (K == 1) || (ld_k == gk);
       mc_lane #(.P(P), .JW(JW), .D(D)) u (
         .clk(aclk),
         .s0_valid(state == ST_RUN), .s0_j(o), .s0_t(t_cur), .s0_buf(curbuf),
-        .s0_nb(nbbits), .s0_own(own_cur[gk*P + o]),
+        .s0_nb(nbbits), .s0_own(ownc),
         .s0_th0(th0), .s0_th1(th1), .target(target),
         .s3_flip(s3_flip[gk]), .s3_buf_o(s3_buf[gk]), .s3_j_o(s3_j[gk]),
         .ld_seed_we(beat && lsec == L_SEED && kmatch),
@@ -187,9 +208,11 @@ module mc_core #(
   reg [1:0]  gsec;
   reg [15:0] gcnt;
   reg [1:0]  gsub;
-  reg        g1_v, g1_col, g1_last;  reg [63:0] g1_d;
-  reg        g2_v, g2_col, g2_last;  reg [63:0] g2_d;
-  reg        g3_v, g3_col, g3_last;  reg [63:0] g3_d;
+  reg [CBW-1:0] gcs;               // 塗り分けの語の中のビート番号
+  reg        g1_v, g1_col, g1_last;  reg [63:0] g1_d;  reg [CBW-1:0] g1_cs;
+  reg        g2_v, g2_col, g2_last;  reg [63:0] g2_d;  reg [CBW-1:0] g2_cs;
+  reg        g3_v, g3_col, g3_last;  reg [63:0] g3_d;  reg [CBW-1:0] g3_cs;
+  wire [WC-1:0] col_rd2p = col_rd2;
 
   localparam FD = 16;
   reg [64:0] fifo [0:FD-1];
@@ -212,14 +235,14 @@ module mc_core #(
       G_HDR: case (gsub)
         2'd0: g_word = {16'h4D43, s_reg, P8, d_in, n_reg};
         2'd1: g_word = cycles;
-        default: g_word = {16'd0, t_cur};
+        default: g_word = {K16, t_cur};
       endcase
       G_REP: case (gsub)
         2'd0: g_word = {32'd0, rd_c[rd_k], rd_best[rd_k]};
         2'd1: g_word = {16'd0, rd_bt[rd_k]};
         default: g_word = {16'd0, rd_ht[rd_k]};
       endcase
-      default: g_last = (gcnt == n_reg - 1);
+      default: g_last = (gcnt == n_reg - 1) && (gcs == CB - 1);
     endcase
   end
   always @(*) begin
@@ -251,6 +274,7 @@ module mc_core #(
           end
           L_HDR1: begin
             target <= din[15:0];
+            lcs <= 0;
             lsec <= L_ADJ;
             lcnt <= 16'd0;
           end
@@ -261,12 +285,16 @@ module mc_core #(
             lcnt <= (lcnt == n_reg - 1) ? 16'd0 : lcnt + 1;
             if (lcnt == n_reg - 1) lsec <= L_COL;
           end
-          L_COL: begin
-            col_we <= 1'b1;
-            col_wa <= lcnt[NW-1:0];
-            col_wd <= din[W-1:0];
-            lcnt <= (lcnt == n_reg - 1) ? 16'd0 : lcnt + 1;
-            if (lcnt == n_reg - 1) lsec <= L_SEED;
+          L_COL: begin  // 頂点ごとに CB ビート。そろったら書く
+            colacc <= colnext;
+            lcs <= (lcs == CB - 1) ? 0 : lcs + 1;
+            if (lcs == CB - 1) begin
+              col_we <= 1'b1;
+              col_wa <= lcnt[NW-1:0];
+              col_wd <= colnext[W-1:0];
+              lcnt <= (lcnt == n_reg - 1) ? 16'd0 : lcnt + 1;
+              if (lcnt == n_reg - 1) lsec <= L_SEED;
+            end
           end
           L_SEED: begin
             lcnt <= (lcnt == R - 1) ? 16'd0 : lcnt + 1;
@@ -366,6 +394,7 @@ module mc_core #(
               gsec <= G_HDR;
               gcnt <= 16'd0;
               gsub <= 2'd0;
+              gcs <= 0;
             end
           endcase
         end
@@ -385,6 +414,7 @@ module mc_core #(
         g1_col  <= (gsec == G_COL);
         g1_d    <= g_word;
         g1_last <= g_last;
+        g1_cs   <= gcs;
         col_ra  <= gcnt[NW-1:0];
         case (gsec)
           G_HDR: begin
@@ -399,8 +429,11 @@ module mc_core #(
             end
           end
           default: begin
-            gcnt <= gcnt + 1;
-            if (gcnt == n_reg - 1) gsec <= G_DONE;
+            gcs <= (gcs == CB - 1) ? 0 : gcs + 1;
+            if (gcs == CB - 1) begin
+              gcnt <= gcnt + 1;
+              if (gcnt == n_reg - 1) gsec <= G_DONE;
+            end
           end
         endcase
       end
@@ -408,13 +441,15 @@ module mc_core #(
       g2_col  <= g1_col;
       g2_d    <= g1_d;
       g2_last <= g1_last;
+      g2_cs   <= g1_cs;
       g3_v    <= g2_v;
       g3_col  <= g2_col;
       g3_d    <= g2_d;
       g3_last <= g2_last;
+      g3_cs   <= g2_cs;
 
       if (f_push) begin
-        fifo[f_wp] <= {g3_last, g3_col ? {{(64-W){1'b0}}, col_rd2} : g3_d};
+        fifo[f_wp] <= {g3_last, g3_col ? col_rd2p[64*g3_cs +: 64] : g3_d};
         f_wp <= f_wp + 1;
       end
       if (f_pop) f_rp <= f_rp + 1;

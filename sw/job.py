@@ -67,6 +67,12 @@ def color_words(cols, n):
     return words
 
 
+def color_beats(words, R):
+    """頂点ごとの語（R bit）を ⌈R/64⌉ ビートずつに分ける（ビート b = ビット 64b..64b+63）。"""
+    cb = (R + 63) // 64
+    return [(w >> (64 * b)) & ((1 << 64) - 1) for w in words for b in range(cb)]
+
+
 def pack_input(n, d, P, adj, rows, target, seeds, c0s, init_words):
     assert d <= 4 and all(len(nb) == d for nb in adj)
     beats = [n | (d << 16) | (P << 24) | (len(rows) << 32), target]
@@ -75,7 +81,7 @@ def pack_input(n, d, P, adj, rows, target, seeds, c0s, init_words):
         for i, u in enumerate(nb):
             w |= u << (16 * i)
         beats.append(w)
-    beats += init_words
+    beats += color_beats(init_words, len(seeds))
     beats += seeds
     beats += c0s
     for sweeps, th in rows:
@@ -87,14 +93,15 @@ def pack_input(n, d, P, adj, rows, target, seeds, c0s, init_words):
 
 def expected_output(n, d, P, rows, reps, final_words):
     WT = sum(m for m, _ in rows) * n
+    K = len(reps) // P
     beats = [n | (d << 16) | (P << 24) | (len(rows) << 32) | (MAGIC << 48),
              (WT + 1) * P,          # 走ったサイクル数（設計値。docs/m1-design.md）
-             WT]
+             WT | (K << 48)]
     for r in reps:
         beats.append(r["best"] | (r["final"] << 16))
         beats.append(NONE48 if r["best_t"] < 0 else r["best_t"])
         beats.append(NONE48 if r["hit_t"] < 0 else r["hit_t"])
-    beats += final_words
+    beats += color_beats(final_words, len(reps))
     return beats
 
 

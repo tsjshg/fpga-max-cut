@@ -54,7 +54,8 @@ def main():
             for w, last in beats:
                 f.write(f"{(int(last) << 64) | w:017x}\n")
     with open(os.path.join(outdir, "params.vh"), "w") as f:
-        f.write(f"`define K_LANES {a.K}\n`define NIN {len(inp)}\n`define NEXP {len(exp)}\n"
+        kw = max(1, (a.K - 1).bit_length())
+        f.write(f"`define K_LANES {a.K}\n`define KW_LANES {kw}\n`define NIN {len(inp)}\n`define NEXP {len(exp)}\n"
                 f"`define NJOBS {len(JOBS)}\n"
                 f"`define IN_HEX \"../vec_k{a.K}/in.hex\"\n`define EXP_HEX \"../vec_k{a.K}/exp.hex\"\n")
     print(f"→ {outdir}: {len(inp)} in, {len(exp)} out")

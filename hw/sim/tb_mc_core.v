@@ -17,7 +17,7 @@ module tb;
   wire [63:0] m_tdata;  wire m_tlast, m_tvalid; reg  m_tready;
   wire [7:0]  m_tkeep;
 
-  mc_core #(.K(`K_LANES), .KW(1)) dut (
+  mc_core #(.K(`K_LANES), .KW(`KW_LANES)) dut (
     .aclk(clk), .aresetn(rstn),
     .s_axis_tdata(s_tdata), .s_axis_tkeep(8'hFF), .s_axis_tlast(s_tlast),
     .s_axis_tvalid(s_tvalid), .s_axis_tready(s_tready),
