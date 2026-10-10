@@ -8,3 +8,13 @@ __pycache__/
 
 # 焼いたもの
 sw/sa
+# Vivado のプロジェクトと作業ファイル（build.tcl からいつでも作り直せる）
+hw/prj_*/
+hw/.Xil/
+hw/*.log
+hw/*.jou
+hw/*.str
+hw/sim/work/
+# 生成物。公開するビットストリームだけ git add -f で入れる
+hw/out/
+__pycache__/
