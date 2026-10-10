@@ -19,9 +19,9 @@ Random 4-regular graph, n = 1024 (2048 edges), 1000 sweeps per run. All numbers 
 
 | Engine | Replicas | Trials per second | vs. FPGA |
 |---|---:|---:|---|
-| **FPGA**, 48 lanes at 125 MHz | 768 | **6.0 × 10⁹** | — |
-| Cortex-A9 × 2 on the same board (`sw/sa_fast.c`, 2 threads) | 256 | 1.12 × 10⁸ | FPGA is **54× faster** |
-| Apple M4 Mac mini, 10 cores (`sw/sa_fast.c`) | 10,240 | 2.98 × 10¹⁰ | FPGA is **5.0× slower** |
+| **FPGA**, 56 lanes at 125 MHz | 896 | **7.0 × 10⁹** | — |
+| Cortex-A9 × 2 on the same board (`sw/sa_fast.c`, 2 threads) | 256 | 1.12 × 10⁸ | FPGA is **63× faster** |
+| Apple M4 Mac mini, 10 cores (`sw/sa_fast.c`) | 10,240 | 2.98 × 10¹⁰ | FPGA is **4.3× slower** |
 
 - **Every engine follows exactly the same search path.** The FPGA, the CPU reference
   (`sw/sa.c`) and the optimized CPU version give bit-identical results for the same seeds,
@@ -30,8 +30,8 @@ Random 4-regular graph, n = 1024 (2048 edges), 1000 sweeps per run. All numbers 
   time-to-target ratio equals the throughput ratio.
 - The best cut found for this graph is 1774. It is not proven optimal.
 - **Why the M4 wins.** The optimized CPU version bit-slices 128 replicas, so one 128-bit XOR
-  advances 128 xorshift64 generators at once. The FPGA spends about 600 LUTs per lane to do one
-  trial per clock, and the XC7Z020 (28 nm, 2012) runs out of slices at 48 lanes. Matching the M4
+  advances 128 xorshift64 generators at once. The FPGA spends about 450 LUTs per lane to do one
+  trial per clock, and the XC7Z020 (28 nm, 2012) is at 90% of its slices with 56 lanes. Matching the M4
   (3 nm, 2024) at 125 MHz would take about 240 lanes (estimate).
 - **Energy per trial has not been measured yet.** The board draws a few watts and the Mac mini a
   few tens of watts under load, so the comparison may come out differently there.
@@ -76,7 +76,8 @@ vertices at random). Only integers are used:
   (windows + 1) × 16 cycles.
 
 **Scaling on the XC7Z020** (125 MHz, whole design including DMA, all measured,
-[`docs/m3.md`](docs/m3.md)):
+[`docs/m3.md`](docs/m3.md)). The last two rows are after trimming each lane's LUTRAM (32-bit trial
+numbers, results read through the write port), which took a lane from about 600 to about 450 LUTs:
 
 | Lanes K | Replicas | WNS (ns) | LUTs | BRAM tiles | Trials/s on the board |
 |---:|---:|---:|---:|---:|---:|
@@ -86,16 +87,21 @@ vertices at random). Only integers are used:
 | 32 | 512 | +0.285 | 31,395 (59%) | 71.5 | 4.00 × 10⁹ |
 | 48 | 768 | +0.124 | 44,652 (84%) | 100 (71%) | 6.00 × 10⁹ |
 | 64 | 1,024 | placement fails: out of slices | | | |
+| 48, trimmed | 768 | +0.167 | 35,235 (66%) | 100 | 6.00 × 10⁹ |
+| **56, trimmed** | **896** | **+0.135** | **40,490 (76%)** | **114.5 (82%)** | **7.00 × 10⁹** |
+
+142.86 MHz did not close (WNS −0.09 to −0.44 ns; at 56 lanes the worst path is inside the AXI DMA),
+so the design stays at 125 MHz.
 
 ## Verification
 
 - The CPU reference `sw/sa.c` is checked against an independent Python implementation
   (`sw/sa_check.py`) and gives identical output on the Mac and on the Cortex-A9.
-- **xsim**: for K = 1, 2, 4, 8 and 48 lanes, four jobs run back to back, with random gaps in the
+- **xsim**: for K = 1, 2, 4, 8, 48 and 56 lanes, four jobs run back to back, with random gaps in the
   input stream and back-pressure on the output. Every output word matches the CPU reference.
   Deliberately broken variants fail as they should: forwarding disabled, write-back one clock
   late, or prefetched words captured one clock early.
-- **On the board**: every output word matches for K = 1, 2, 4, 8, 16, 32 and 48.
+- **On the board**: every output word matches for K = 1, 2, 4, 8, 16, 32, 48 and 56.
   The expected values are generated on the board by the CPU reference.
 
 ## Repository layout
@@ -145,8 +151,8 @@ vivado.sh sh 'sim/run.sh 1'       # -> PASS: K=1, 4 jobs, ... all match
 **3. Bitstream**
 
 ```bash
-vivado.sh build build.tcl bd 125 48 2     # block design check first (about 30 s)
-vivado.sh build build.tcl all 125 48 2    # -> out/mc125_k48.bit and .hwh
+vivado.sh build build.tcl bd 125 56 2     # block design check first (about 30 s)
+vivado.sh build build.tcl all 125 56 2    # -> out/mc125_k56.bit and .hwh
 ```
 
 The last argument is the number of parallel Vivado jobs. Use 2 in Docker with 15 GB of memory,
@@ -156,11 +162,11 @@ or more on a bigger Linux build machine.
 `sw/job.py` and the `.bit`/`.hwh` in `~/<dir>/host`, and `data/*` in `~/<dir>/data`.
 
 ```bash
-pynq.sh run <dir>/host mc.py mc125_k48.bit ../data/rr_n1024_d4_s1.adj ../data/std_d4.sched --K 48 --target 1774
+pynq.sh run <dir>/host mc.py mc125_k56.bit ../data/rr_n1024_d4_s1.adj ../data/std_d4.sched --K 56 --target 1774
 ```
 
 This prints whether every word matched the CPU, the cycle count and trials per second. The CPU
-reference on the board takes about 45 s to produce the expected values for 768 replicas.
+reference on the board takes about 50 s to produce the expected values for 896 replicas.
 
 ## Status
 
@@ -169,7 +175,7 @@ reference on the board takes about 45 s to produce the expected values for 768 r
 | M0 | CPU reference and graph generator | done ([docs/m0.md](docs/m0.md)) |
 | M1 | the circuit, bit-exact in xsim | done ([docs/m1-design.md](docs/m1-design.md)) |
 | M2 | bit-exact on the board, trials/s | done |
-| M3 | scaling the number of lanes | done ([docs/m3.md](docs/m3.md)) |
+| M3 | scaling the number of lanes, then trimming each lane | done ([docs/m3.md](docs/m3.md)) |
 | — | optimized CPU version | done ([docs/cpu-fast.md](docs/cpu-fast.md)) |
 | M4 | time-to-target (TTS99) comparison; G-set G48–G50 | next |
 | | energy per trial | waiting for a power meter |

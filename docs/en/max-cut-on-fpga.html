@@ -411,7 +411,7 @@
   </p>
 
   <figure>
-    <div class="fig-scroll"><!--FIG:system--><svg viewBox="0 0 760 250" role="img" aria-label="Overall structure. The ARM prepares the job (graph, initial colourings, random seeds, threshold table) in DDR, and an AXI DMA streams it into the FPGA circuit. The circuit loads it, anneals with 48 lanes and sends back the results. The graph and colourings live in the circuit's BRAM, and nothing goes in or out while it runs.">
+    <div class="fig-scroll"><!--FIG:system--><svg viewBox="0 0 760 250" role="img" aria-label="Overall structure. The ARM prepares the job (graph, initial colourings, random seeds, threshold table) in DDR, and an AXI DMA streams it into the FPGA circuit. The circuit loads it, anneals with 56 lanes and sends back the results. The graph and colourings live in the circuit's BRAM, and nothing goes in or out while it runs.">
 <defs><marker id="ah3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" class="ink2f"/></marker></defs>
 <rect x="14" y="30" width="170" height="190" rx="4" class="box"/>
 <text x="26" y="50" class="ink3" font-size="11" text-anchor="start" letter-spacing=".12em">PS</text>
@@ -428,7 +428,7 @@
 <rect x="506" y="70" width="92" height="18" rx="2" class="lane"/>
 <rect x="509" y="73" width="92" height="18" rx="2" class="lane"/>
 <rect x="512" y="76" width="92" height="18" rx="2" class="lane"/>
-<text x="551" y="130" class="tri" font-size="14" text-anchor="middle" font-weight="700">48 lanes</text>
+<text x="551" y="130" class="tri" font-size="14" text-anchor="middle" font-weight="700">56 lanes</text>
 <text x="551" y="150" class="ink2" font-size="11.5" text-anchor="middle">16 replicas each</text>
 <rect x="372" y="156" width="92" height="40" rx="3" class="box"/><text x="418" y="181" class="ink" font-size="12.5" text-anchor="middle">results</text>
 <rect x="630" y="70" width="104" height="110" rx="3" class="box2"/>
@@ -696,7 +696,7 @@
   </p>
 
   <figure>
-    <div class="fig-scroll"><!--FIG:window--><svg viewBox="0 0 760 360" role="img" aria-label="Top: the word of one vertex. Bit p is the colour in replica p; lane 0 uses bits 0 to 15 and lane 47 bits 752 to 767. Bottom: the schedule within a window. For 16 clocks all lanes try vertex v. Meanwhile, at time 0 the neighbour list of v+1 is read, at time 3 the word of v−1 is written back, at times 4 to 8 the neighbour words of v+1 and the word of v+1 are read, and at times 7 to 11 they are captured. Everything is swapped at time 15.">
+    <div class="fig-scroll"><!--FIG:window--><svg viewBox="0 0 760 360" role="img" aria-label="Top: the word of one vertex. Bit p is the colour in replica p; lane 0 uses bits 0 to 15 and lane 55 bits 880 to 895. Bottom: the schedule within a window. For 16 clocks all lanes try vertex v. Meanwhile, at time 0 the neighbour list of v+1 is read, at time 3 the word of v−1 is written back, at times 4 to 8 the neighbour words of v+1 and the word of v+1 are read, and at times 7 to 11 they are captured. Everything is swapped at time 15.">
 <text x="204" y="42" class="ink2" font-size="12" text-anchor="end">word of vertex u (one BRAM row)</text>
 <text x="204" y="60" class="ink3" font-size="11.5" text-anchor="end">bit p = colour in replica p</text>
 <rect x="215" y="30" width="18" height="26" rx="2" class="v0"/>
@@ -722,7 +722,7 @@
 <rect x="615" y="30" width="18" height="26" rx="2" class="v0"/>
 <rect x="635" y="30" width="18" height="26" rx="2" class="v1"/>
 <line x1="214" y1="66" x2="512" y2="66" class="brace"/><text x="364.0" y="82" class="ink3" font-size="11.5" text-anchor="middle">lane 0 (bits 0–15)</text>
-<line x1="536" y1="66" x2="654" y2="66" class="brace"/><text x="594" y="82" class="ink3" font-size="11.5" text-anchor="middle">… lane 47 (752–767)</text>
+<line x1="536" y1="66" x2="654" y2="66" class="brace"/><text x="594" y="82" class="ink3" font-size="11.5" text-anchor="middle">… lane 55 (880–895)</text>
 <text x="246.0" y="118" class="ink3" font-size="11" text-anchor="middle" font-family="var(--mono)">0</text>
 <text x="278.0" y="118" class="ink3" font-size="11" text-anchor="middle" font-family="var(--mono)">1</text>
 <text x="310.0" y="118" class="ink3" font-size="11" text-anchor="middle" font-family="var(--mono)">2</text>
@@ -772,12 +772,12 @@
   <ul>
     <li><b>Simulation:</b> four jobs back to back, with random gaps in the input and back-pressure on the output.
       Every returned word (each replica's best value, its trial number, the final colouring and so on) matches the CPU
-      version, for 1, 2, 4, 8 and 48 lanes.</li>
+      version, for 1, 2, 4, 8, 48 and 56 lanes.</li>
     <li><b>Breaking it on purpose:</b> disabling forwarding, delaying the write-back by one clock, or capturing the
       prefetched words one clock early all produce mismatches, as they should. This confirms the test does not miss
       real errors.</li>
     <li><b>On the board:</b> the CPU version on the board generates the expected values, and every word from the
-      circuit is compared with them. All match for 1, 2, 4, 8, 16, 32 and 48 lanes.</li>
+      circuit is compared with them. All match for 1, 2, 4, 8, 16, 32, 48 and 56 lanes.</li>
   </ul>
 
   <h3>How many lanes fit</h3>
@@ -792,8 +792,10 @@
       <tr><td>8</td><td>128</td><td>11,352</td><td>29</td><td>+0.294 ns</td><td>1.00 × 10<sup>9</sup></td></tr>
       <tr><td>16</td><td>256</td><td>17,318</td><td>43</td><td>+0.070 ns</td><td>2.00 × 10<sup>9</sup></td></tr>
       <tr><td>32</td><td>512</td><td>31,395</td><td>71.5</td><td>+0.285 ns</td><td>4.00 × 10<sup>9</sup></td></tr>
-      <tr class="hit"><td><strong>48</strong></td><td>768</td><td>44,652 (84%)</td><td>100</td><td>+0.124 ns</td><td><strong>6.00 × 10<sup>9</sup></strong></td></tr>
+      <tr><td>48</td><td>768</td><td>44,652 (84%)</td><td>100</td><td>+0.124 ns</td><td>6.00 × 10<sup>9</sup></td></tr>
       <tr><td>64</td><td>1,024</td><td colspan="4" class="t">placement fails (out of slices)</td></tr>
+      <tr><td>48, trimmed</td><td>768</td><td>35,235 (66%)</td><td>100</td><td>+0.167 ns</td><td>6.00 × 10<sup>9</sup></td></tr>
+      <tr class="hit"><td><strong>56, trimmed</strong></td><td>896</td><td>40,490 (76%)</td><td>114.5</td><td>+0.135 ns</td><td><strong>7.00 × 10<sup>9</sup></strong></td></tr>
     </tbody>
   </table>
   </div>
@@ -803,8 +805,13 @@
     <p>
       At 48 lanes, timing failed first. The cause was not the annealing logic but routing congestion in the control
       signals for loading, which fan out to every lane. Registering those signals once inside each lane fixed it. At
-      64 lanes the placer ran out of slices, the space the circuit is placed in. One lane uses about 600 LUTs, roughly
-      40% of them LUTRAM holding per-replica state.
+      64 lanes the placer ran out of slices, the space the circuit is placed in. At that point one lane used about
+      600 LUTs, roughly 40% of them LUTRAM holding per-replica state.
+    </p>
+    <p>
+      So the LUTRAM was trimmed: trial numbers went from 48 to 32 bits, and results are now read through the write port,
+      which removes a separate read port. A lane came down to about 450 LUTs and <b>56 lanes (896 replicas) fit</b>.
+      Raising the clock to 142.86 MHz fell short by 0.1 to 0.4 ns. The last worst path was inside the AXI DMA.
     </p>
   </div>
 </section>
@@ -821,7 +828,7 @@
   </p>
 
   <figure>
-    <div class="fig-scroll"><!--FIG:bars--><svg viewBox="0 0 760 290" role="img" aria-label="Trials per second on a log scale. Cortex-A9 × 2 plain version 1.95 × 10^7, Cortex-A9 × 2 sa_fast 1.12 × 10^8, FPGA 1 lane 1.25 × 10^8, M4 10 cores plain version 2.32 × 10^9, FPGA 48 lanes 6.0 × 10^9, M4 10 cores sa_fast 2.98 × 10^10.">
+    <div class="fig-scroll"><!--FIG:bars--><svg viewBox="0 0 760 290" role="img" aria-label="Trials per second on a log scale. Cortex-A9 × 2 plain version 1.95 × 10^7, Cortex-A9 × 2 sa_fast 1.12 × 10^8, FPGA 1 lane 1.25 × 10^8, M4 10 cores plain version 2.32 × 10^9, FPGA 56 lanes 7.0 × 10^9, M4 10 cores sa_fast 2.98 × 10^10.">
 <line x1="250.0" y1="20" x2="250.0" y2="242" class="grid"/>
 <text x="250.0" y="260" class="ink3" font-size="11" text-anchor="middle" font-family="var(--mono)">10<tspan dy="-5" font-size="8">7</tspan></text>
 <line x1="367.5" y1="20" x2="367.5" y2="242" class="grid"/>
@@ -844,28 +851,28 @@
 <text x="240" y="156" class="ink2" font-size="12.5" text-anchor="end">M4 · 10 cores · sa (plain)</text>
 <rect x="250" y="141" width="277.9" height="22" rx="2" class="b-cpu"/>
 <text x="535.9" y="156" class="ink2" font-size="11.5" font-family="var(--mono)">2.32 × 10<tspan dy="-5" font-size="8">9</tspan></text>
-<text x="240" y="192" class="ink" font-size="12.5" text-anchor="end" font-weight="700">FPGA · 48 lanes</text>
-<rect x="250" y="177" width="326.4" height="22" rx="2" class="b-fpga"/>
-<text x="584.4" y="192" class="ink2" font-size="11.5" font-family="var(--mono)">6.00 × 10<tspan dy="-5" font-size="8">9</tspan></text>
+<text x="240" y="192" class="ink" font-size="12.5" text-anchor="end" font-weight="700">FPGA · 56 lanes</text>
+<rect x="250" y="177" width="334.3" height="22" rx="2" class="b-fpga"/>
+<text x="592.3" y="192" class="ink2" font-size="11.5" font-family="var(--mono)">7.00 × 10<tspan dy="-5" font-size="8">9</tspan></text>
 <text x="240" y="228" class="ink2" font-size="12.5" text-anchor="end">M4 · 10 cores · sa_fast</text>
 <rect x="250" y="213" width="408.2" height="22" rx="2" class="b-cpu"/>
 <text x="666.2" y="228" class="ink2" font-size="11.5" font-family="var(--mono)">2.98 × 10<tspan dy="-5" font-size="8">10</tspan></text>
 <text x="485.0" y="282" class="ink3" font-size="11.5" text-anchor="middle">trials per second (log scale)</text>
 </svg><!--/FIG--></div>
     <figcaption>
-      <b>Trials per second (log scale, all measured).</b> The 48-lane FPGA is 54× faster than the same board's ARM
-      (2 cores, optimized), and one fifth of the M4 Mac mini (10 cores, optimized). All engines do the same search, so
+      <b>Trials per second (log scale, all measured).</b> The 56-lane FPGA is 63× faster than the same board's ARM
+      (2 cores, optimized), and 4.3× slower than the M4 Mac mini (10 cores, optimized). All engines do the same search, so
       the time to reach a target scales the same way.
     </figcaption>
   </figure>
 
-  <p class="keyline">54× faster than the CPU on the same board, 5× slower than a current one.</p>
+  <p class="keyline">63× faster than the CPU on the same board, 4.3× slower than a current one.</p>
 
   <p>
     The M4 is faster because of <b>bit-slicing</b>. The random states of 128 replicas are transposed into 64 words of
     128 bits, where word b holds bit b of every replica's 64-bit state. Then the shifts and XORs of xorshift64 become XORs
     between whole words, and one instruction advances the generators of 128 replicas. The acceptance test r &lt; TH can
-    also be decided on whole words, from the top bit down. The FPGA, in contrast, spends one lane (about 600 LUTs) per
+    also be decided on whole words, from the top bit down. The FPGA, in contrast, spends one lane (about 450 LUTs) per
     trial per clock. This is also a 28 nm FPGA from 2012 against a 3 nm CPU from 2024. Matching the M4 at 125 MHz would
     take about 240 lanes (estimate).
   </p>

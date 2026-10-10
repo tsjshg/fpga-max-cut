@@ -108,7 +108,11 @@ module mc_core #(
 
   reg          col_we;
   reg [NW-1:0] col_wa;
-  reg [W-1:0]  col_wd;
+  // 書き込む値は、読み込み用と書き戻し用の2本を毎クロック無条件に取り込み、書くときに選ぶ。
+  // 1本のレジスタに許可（CE）付きで載せると、状態の解読が W = 896 bit の CE に広がって 142.86 MHz で落ちた
+  reg [W-1:0]  col_wd_ld, col_wd_wb;
+  (* max_fanout = 64 *) reg col_wsel;   // 1 = 読み込みの値
+  wire [W-1:0] col_wd = col_wsel ? col_wd_ld : col_wd_wb;
   reg [NW-1:0] col_ra;
   // 読み込みで塗り分けの語を組み立てる（ビート 0 が下位）
   reg [CBW-1:0] lcs;
@@ -262,6 +266,8 @@ module mc_core #(
   integer i, kk;
   always @(posedge aclk) begin
     col_we <= 1'b0;
+    col_wd_ld <= colnext[W-1:0];   // 読み込みのビートの時の値が、col_we の立つクロックに残る
+    col_wd_wb <= own_prev;         // o = O_WB の時の値が、col_we の立つクロックに残る
     adj_we <= 1'b0;
     if (!aresetn) begin
       state <= ST_LOAD;
@@ -299,7 +305,7 @@ module mc_core #(
             if (lcs == CB - 1) begin
               col_we <= 1'b1;
               col_wa <= lcnt[NW-1:0];
-              col_wd <= colnext[W-1:0];
+              col_wsel <= 1'b1;
               lcnt <= (lcnt == n_reg - 1) ? 16'd0 : lcnt + 1;
               if (lcnt == n_reg - 1) lsec <= L_SEED;
             end
@@ -353,7 +359,7 @@ module mc_core #(
         if (o == O_WB && prev_valid) begin
           col_we <= 1'b1;
           col_wa <= vprev;
-          col_wd <= own_prev;
+          col_wsel <= 1'b0;
         end
         for (i = 0; i < D; i = i + 1)
           if (o == O_RD0 + i) col_ra <= nbidx[i];
