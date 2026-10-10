@@ -10,6 +10,9 @@ The goal is high-quality cuts found fast, not proofs of optimality. "The FPGA mu
 assumed: speed, solution quality and resources are measured separately, and the result is reported
 whichever way it falls.
 
+**Explainer: <https://tsjshg.github.io/fpga-max-cut/>.** It covers what Max-Cut is, the methods
+for it, simulated annealing, and how the annealer was built as a circuit, with figures, in English and Japanese.
+
 ## Results so far
 
 Random 4-regular graph, n = 1024 (2048 edges), 1000 sweeps per run. All numbers are **measured**.
