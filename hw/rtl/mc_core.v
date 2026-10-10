@@ -73,15 +73,21 @@ module mc_core #(
   localparam ST_LOAD = 3'd0, ST_PRE = 3'd1, ST_RUN = 3'd2, ST_POST = 3'd3, ST_OUT = 3'd4;
   reg [2:0] state;
 
-  localparam L_HDR0 = 3'd0, L_HDR1 = 3'd1, L_ADJ = 3'd2, L_COL = 3'd3,
-             L_SEED = 3'd4, L_C0 = 3'd5, L_SCHED = 3'd6;
-  reg [2:0]  lsec;
+  localparam L_HDR0 = 4'd0, L_HDR1 = 4'd1, L_ADJ = 4'd2, L_COL = 4'd3,
+             L_SEED = 4'd4, L_C0 = 4'd5, L_SCHED = 4'd6,
+             L_EXS = 4'd7, L_LTH = 4'd8, L_SWT = 4'd9;     // 交換法: 交換用の種・温度ごとのしきい値・交換の表
+  localparam SWT_BEATS = (P - 1) * 256;                     // 交換の表: 温度の組ごとに 512 個（2 個で 1 ビート）
+  reg [3:0]  lsec;
   reg [15:0] lcnt;
 
   reg [15:0] n_reg;
   reg [7:0]  d_in;
   reg [15:0] s_reg;
   reg [15:0] target;
+  reg        pt_mode;      // 1 = レプリカ交換法（docs/m5.md）
+  reg [31:0] pt_sweeps;    // 交換法: 周回数
+  reg [9:0]  pt_dmax;      // 交換法: 交換の表の D の上限
+  reg        e_overrun;    // 交換法: 交換の判断が 1 周回に収まらなかった（出力の見出しに出す）
 
   assign s_axis_tready = (state == ST_LOAD);
   wire beat = s_axis_tvalid && s_axis_tready;
@@ -161,6 +167,9 @@ module mc_core #(
   reg [31:0]   th0, th1;
   reg [63:0]   cycles;
   reg          f_vnext_last, f_vcur_last, f_sweep_last, f_stage_last;
+  reg          cur_last;     // 今の窓が周回の最後の頂点（窓の境目で vcur と一緒に変わる）
+  reg          cur_first;    // 今の窓が周回の最初の頂点
+  reg          sw_par;       // 今の周回の偶奇（交換法の tidx の組）
 
   wire [W-1:0] own_prev = curbuf ? own0 : own1;   // 書き戻し用（o = O_WB でだけ使う）
   wire win_end = (o == P - 1);
@@ -175,6 +184,12 @@ module mc_core #(
   wire [31:0]   rd_bt   [0:K-1];
   wire [31:0]   rd_ht   [0:K-1];
   wire [K-1:0]  rd_btn, rd_htn;
+  wire [JW-1:0] rd_tidx [0:K-1];
+  wire [15:0]   snap_q  [0:K-1];
+  reg  [JW-1:0] eng_snap_a;
+  reg  [K-1:0]  eng_tw_we;
+  reg           eng_tw_bank;
+  reg  [JW-1:0] eng_tw_a, eng_tw_d;
   reg  [JW-1:0] rd_j;
   reg  [KW-1:0] rd_k;
 
@@ -200,6 +215,11 @@ module mc_core #(
         .s0_valid(state == ST_RUN), .s0_j(o), .s0_t(t_cur), .s0_buf(curbuf),
         .s0_nb(nbbits), .s0_own(ownc),
         .s0_th0(th0), .s0_th1(th1), .target(target),
+        .pt_mode(pt_mode), .s0_bank(sw_par), .s0_last(cur_last),
+        .ld_lth_we_i(beat && lsec == L_LTH),
+        .eng_snap_a_i(eng_snap_a), .snap_q(snap_q[gk]),
+        .eng_tw_we_i(eng_tw_we[gk]), .eng_tw_bank_i(eng_tw_bank), .eng_tw_a_i(eng_tw_a), .eng_tw_d_i(eng_tw_d),
+        .rd_bank(sw_par), .rd_tidx(rd_tidx[gk]),
         .s3_flip(s3_flip[gk]), .s3_buf_o(s3_buf[gk]), .s3_j_o(s3_j[gk]),
         .ld_seed_we_i(beat && lsec == L_SEED && kmatch),
         .ld_c0_we_i(beat && lsec == L_C0 && kmatch),
@@ -246,7 +266,7 @@ module mc_core #(
       G_HDR: case (gsub)
         2'd0: g_word = {16'h4D43, s_reg, P8, d_in, n_reg};
         2'd1: g_word = cycles;
-        default: g_word = {K16, 16'd0, t_cur};
+        default: g_word = {K16, e_overrun, 15'd0, t_cur};   // e_overrun: 交換の判断が 1 周回に収まらなかった
       endcase
       G_REP: ;
       default: g_last = (gcnt == n_reg - 1) && (gcs == CB - 1);
@@ -255,11 +275,124 @@ module mc_core #(
   reg [63:0] rep_word;   // g2 の段で、レーンが受けた語から作る
   always @(*) begin
     case (g2_sub)
-      2'd0: rep_word = {32'd0, rd_c[rd_k2], rd_best[rd_k2]};
+      2'd0: rep_word = {28'd0, pt_mode ? rd_tidx[rd_k2] : {JW{1'b0}}, rd_c[rd_k2], rd_best[rd_k2]};
       // 全 1（無し）は 48 bit の全 1 に広げる（出力の形は変えない）
       2'd1: rep_word = {16'd0, {16{rd_btn[rd_k2]}}, rd_bt[rd_k2]};
       default: rep_word = {16'd0, {16{rd_htn[rd_k2]}}, rd_ht[rd_k2]};
     endcase
+  end
+
+  wire load_last = beat && ((lsec == L_SCHED && lcnt == {s_reg[14:0], 1'b0} - 1) ||
+                             (lsec == L_SWT && lcnt == SWT_BEATS - 1));
+
+  // ---------------- 交換の仕組み（レプリカ交換法。docs/m5.md） ----------------
+  // 周回 s+1 の始め（頂点 0 の窓の o = 4。周回 s の最後のスナップショットが書き終わった後）に動き出し、
+  // レーンを 1 本ずつ回って、周回 s の終わりの C で交換を決め、新しい tidx を周回 s+2 の組（= 周回 s の偶奇）に書く。
+  // これは CPU 版 pt.c の lag 1 と同じ。周回 s+1 の終わりまで（n·16 クロック）に終わる必要がある（host が確かめる）。
+  localparam [63:0] IDENT = 64'hFEDC_BA98_7654_3210;   // 温度 k にレプリカ k
+  (* ram_style = "distributed" *) reg [63:0] perm_mem [0:K-1];   // 温度 k にいるレプリカ（4 bit × 16）
+  (* ram_style = "distributed" *) reg [63:0] exr_mem  [0:K-1];   // レーンごとの交換用の xorshift64
+  (* ram_style = "block" *) reg [63:0] swt_mem [0:4095];         // 交換の表 {SW[k][2i+1], SW[k][2i]} を番地 {k, i} に
+  reg        swt_we;
+  reg [11:0] swt_wa, swt_ra;
+  reg [63:0] swt_wd, swt_rd1, swt_rd2;
+  always @(posedge aclk) begin
+    if (swt_we) swt_mem[swt_wa] <= swt_wd;
+    swt_rd1 <= swt_mem[swt_ra];
+    swt_rd2 <= swt_rd1;
+  end
+
+  localparam E_IDLE = 4'd0, E_LD = 4'd1, E_PA = 4'd2, E_PB = 4'd3, E_W1 = 4'd4, E_W2 = 4'd5,
+             E_SA = 4'd6, E_SB = 4'd7, E_W3 = 4'd8, E_W4 = 4'd9, E_DEC = 4'd10, E_WB = 4'd11, E_SV = 4'd12;
+  reg [3:0]  e_state;
+  reg [KW-1:0] e_lane;
+  reg [JW-1:0] e_k, e_wb;
+  reg        e_par, e_armed, e_le0, e_half;
+  reg [63:0] e_perm, e_rng;
+  reg [31:0] e_r;
+  reg [15:0] e_sa, e_sval;
+  wire e_start = pt_mode && (state == ST_RUN) && e_armed && cur_first && (o == 4);
+  wire [63:0] e_xn = (e_rng ^ (e_rng << 13)) ^ ((e_rng ^ (e_rng << 13)) >> 7);
+  wire [63:0] e_next = e_xn ^ (e_xn << 17);
+  wire [16:0] e_d = {1'b0, e_sa} - {1'b0, e_sval};              // D = C_cold − C_hot（17 bit の2の補数）
+  wire [9:0]  e_idx = ($signed(e_d) > $signed({7'd0, pt_dmax})) ? pt_dmax : e_d[9:0];   // min(D, DMAX)（D ≥ 1 のとき）
+  wire [9:0]  e_im1 = e_idx - 10'd1;
+  wire [31:0] e_sw = e_half ? swt_rd2[63:32] : swt_rd2[31:0];
+
+  always @(posedge aclk) begin
+    swt_we <= 1'b0;
+    eng_tw_we <= {K{1'b0}};
+    e_sval <= snap_q[e_lane];   // スナップショットの値（番地を渡してから 4 クロック目に見える）
+    if (beat && lsec == L_SWT) begin
+      swt_we <= 1'b1;
+      swt_wa <= lcnt[11:0];
+      swt_wd <= din;
+    end
+    if (beat && lsec == L_EXS) begin
+      perm_mem[lcnt[KW-1:0]] <= IDENT;
+      exr_mem[lcnt[KW-1:0]]  <= din;
+    end
+    if (!aresetn) begin
+      e_state <= E_IDLE;
+      e_overrun <= 1'b0;
+    end else begin
+      if (load_last) e_overrun <= 1'b0;
+      if (e_start && e_state != E_IDLE) e_overrun <= 1'b1;
+      case (e_state)
+        E_IDLE: if (e_start) begin
+          e_lane <= 0;
+          e_par <= ~sw_par;            // 決める周回 s の偶奇（いまは周回 s+1）
+          e_state <= E_LD;
+        end
+        E_LD: begin
+          e_perm <= perm_mem[e_lane];
+          e_rng  <= exr_mem[e_lane];
+          e_k    <= {{(JW-1){1'b0}}, e_par};
+          e_state <= E_PA;
+        end
+        E_PA: begin                    // 組 (k, k+1): 乱数を 1 回進め、冷たい側のレプリカのスナップショットを読む
+          eng_snap_a <= e_perm[4*e_k +: 4];
+          e_rng <= e_next;
+          e_r   <= e_next[63:32];
+          e_state <= E_PB;
+        end
+        E_PB: begin eng_snap_a <= e_perm[4*(e_k+1) +: 4]; e_state <= E_W1; end
+        E_W1: e_state <= E_W2;
+        E_W2: e_state <= E_SA;
+        E_SA: begin e_sa <= e_sval; e_state <= E_SB; end
+        E_SB: begin                    // e_sval = 熱い側の C
+          e_le0  <= e_d[16] || (e_d == 17'd0);
+          swt_ra <= {e_k, e_im1[8:1]};
+          e_half <= e_im1[0];
+          e_state <= E_W3;
+        end
+        E_W3: e_state <= E_W4;
+        E_W4: e_state <= E_DEC;
+        E_DEC: begin
+          if (e_le0 || (e_r < e_sw)) begin
+            e_perm[4*e_k +: 4]     <= e_perm[4*(e_k+1) +: 4];
+            e_perm[4*(e_k+1) +: 4] <= e_perm[4*e_k +: 4];
+          end
+          e_k <= e_k + 2;
+          if (e_k + 3 < P) e_state <= E_PA;
+          else begin e_wb <= 0; e_state <= E_WB; end
+        end
+        E_WB: begin                    // 周回 s+2 の組に、温度 k にいるレプリカの tidx = k を書く
+          eng_tw_we[e_lane] <= 1'b1;
+          eng_tw_bank <= e_par;
+          eng_tw_a <= e_perm[4*e_wb +: 4];
+          eng_tw_d <= e_wb;
+          e_wb <= e_wb + 1;
+          if (e_wb == P - 1) e_state <= E_SV;
+        end
+        default: begin                 // E_SV
+          perm_mem[e_lane] <= e_perm;
+          exr_mem[e_lane]  <= e_rng;
+          e_lane <= e_lane + 1;
+          e_state <= (e_lane == K - 1) ? E_IDLE : E_LD;
+        end
+      endcase
+    end
   end
 
   // ---------------- 本体 ----------------
@@ -284,10 +417,13 @@ module mc_core #(
             n_reg <= din[15:0];
             d_in  <= din[23:16];
             s_reg <= din[47:32];
+            pt_mode <= din[48];
             lsec  <= L_HDR1;
           end
           L_HDR1: begin
             target <= din[15:0];
+            pt_sweeps <= din[47:16];
+            pt_dmax <= din[57:48];
             lcs <= 0;
             lsec <= L_ADJ;
             lcnt <= 16'd0;
@@ -316,26 +452,34 @@ module mc_core #(
           end
           L_C0: begin
             lcnt <= (lcnt == R - 1) ? 16'd0 : lcnt + 1;
-            if (lcnt == R - 1) lsec <= L_SCHED;
+            if (lcnt == R - 1) lsec <= pt_mode ? L_EXS : L_SCHED;
           end
-          default: begin // L_SCHED（表への書き込みは上の always）
+          L_EXS: begin  // レーンごとの交換用の種。温度の並び perm は「温度 k にレプリカ k」から
+            lcnt <= (lcnt == K - 1) ? 16'd0 : lcnt + 1;
+            if (lcnt == K - 1) lsec <= L_LTH;
+          end
+          L_LTH: begin  // 温度ごとのしきい値（レーンが受けて書く）
+            lcnt <= (lcnt == P - 1) ? 16'd0 : lcnt + 1;
+            if (lcnt == P - 1) lsec <= L_SWT;
+          end
+          default: begin // L_SCHED・L_SWT（表への書き込みは別の always）
             lcnt <= lcnt + 1;
-            if (lcnt == {s_reg[14:0], 1'b0} - 1) begin
-              // 読み込み終わり。窓 -1（試行を流さず窓 0 の準備だけする）へ
-              lsec <= L_HDR0;
-              lcnt <= 16'd0;
-              state <= ST_PRE;
-              o <= 0;
-              vnext <= 0;
-              cur_valid <= 1'b0;
-              prev_valid <= 1'b0;
-              curbuf <= 1'b0;
-              stage <= 0;
-              sweep_cnt <= 0;
-              sch_ra <= 0;
-            end
           end
         endcase
+      end
+      if (load_last) begin
+        // 読み込み終わり。窓 -1（試行を流さず窓 0 の準備だけする）へ
+        lsec <= L_HDR0;
+        lcnt <= 16'd0;
+        state <= ST_PRE;
+        o <= 0;
+        vnext <= 0;
+        cur_valid <= 1'b0;
+        prev_valid <= 1'b0;
+        curbuf <= 1'b0;
+        stage <= 0;
+        sweep_cnt <= 0;
+        sch_ra <= 0;
       end
 
       // ======== 窓（-1、0 … WT-1、WT） ========
@@ -344,7 +488,7 @@ module mc_core #(
       f_vnext_last <= (vnext == n_reg - 1);
       f_vcur_last  <= (vcur == n_reg - 1);
       f_sweep_last <= (sweep_cnt + 1 == cur_sweeps);
-      f_stage_last <= (stage + 1 == s_reg);
+      f_stage_last <= pt_mode || (stage + 1 == s_reg);
       if (in_win) begin
         o <= o + 1;
         if (state != ST_PRE) cycles <= cycles + 1;
@@ -372,6 +516,8 @@ module mc_core #(
         if (win_end) begin
           vprev <= vcur;
           vcur  <= vnext;
+          cur_last  <= f_vnext_last;
+          cur_first <= cur_last;
           vnext <= f_vnext_last ? 0 : vnext + 1;
           prev_valid <= cur_valid;
           for (i = 0; i < D; i = i + 1) nb[i] <= nbn[i];
@@ -386,12 +532,16 @@ module mc_core #(
               cycles <= 64'd0;
               th0 <= sch_th[31:0];        // 窓 -1 の間ずっと番地 0 を読んでいる
               th1 <= sch_th[63:32];
-              cur_sweeps <= sch_sw;
+              cur_sweeps <= pt_mode ? pt_sweeps : sch_sw;
               sch_ra <= 1;
+              sw_par <= 1'b0;
+              e_armed <= 1'b0;
             end
             ST_RUN: begin
               t_cur <= t_cur + 1;
               if (f_vcur_last) begin
+                sw_par <= ~sw_par;     // 周回の終わり
+                e_armed <= 1'b1;       // 次の周回の始めに、この周回の交換を決める
                 if (f_sweep_last) begin
                   sweep_cnt <= 0;
                   if (f_stage_last) begin

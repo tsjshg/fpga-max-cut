@@ -52,6 +52,7 @@ static uint32_t *adj, *TH, *SW; /* TH: M×(d+1)、SW: (M−1)×dmax */
 static uint64_t sweeps_total, exch_every = 1;
 static int lag;
 static int ntargets, quiet, nthreads = 1, R; /* R = 系の数 */
+static uint8_t *colors0; /* 初期の塗り分け（--init で書き出す） */
 static int32_t targets[MAX_TARGETS];
 static uint64_t master_seed = 1;
 
@@ -219,6 +220,7 @@ static void run_system(int L)
         int p = L * M + j;
         uint8_t *s = colors + (size_t)p * n;
         res[p].seed = init_replica(p, s);
+        memcpy(colors0 + (size_t)p * n, s, n);
         rp[j].x = res[p].seed;
         rp[j].c = rp[j].best = res[p].c0 = cut_value(s);
         rp[j].best_t = NONE;
@@ -275,16 +277,31 @@ static void print_t(uint64_t t)
         printf(" %" PRIu64, t);
 }
 
+static void dump_colors(const char *path, const uint8_t *buf)
+{
+    FILE *f = fopen(path, "w");
+    if (!f) {
+        perror(path);
+        exit(1);
+    }
+    for (int p = 0; p < R * M; p++) {
+        for (int v = 0; v < n; v++)
+            fputc('0' + buf[(size_t)p * n + v], f);
+        fputc('\n', f);
+    }
+    fclose(f);
+}
+
 static void usage(void)
 {
     fprintf(stderr, "使い方: pt -g graph.adj -l ladder.ladder -w 周回数 [-R 系の数] [-S 主種] [-t 目標]...\n"
-                    "         [-e 交換の間隔（周回）] [--lag 0|1] [-j スレッド数] [-q]\n");
+                    "         [-e 交換の間隔（周回）] [--lag 0|1] [-j スレッド数] [--init 書き出し先] [--final 書き出し先] [-q]\n");
     exit(2);
 }
 
 int main(int argc, char **argv)
 {
-    const char *gpath = NULL, *lpath = NULL;
+    const char *gpath = NULL, *lpath = NULL, *init_path = NULL, *final_path = NULL;
     R = 8;
     for (int i = 1; i < argc; i++) {
         const char *a = argv[i], *v = i + 1 < argc ? argv[i + 1] : NULL;
@@ -313,6 +330,10 @@ int main(int argc, char **argv)
             lag = atoi(v);
         else if (!strcmp(a, "-j"))
             nthreads = atoi(v);
+        else if (!strcmp(a, "--init"))
+            init_path = v;
+        else if (!strcmp(a, "--final"))
+            final_path = v;
         else
             usage();
     }
@@ -322,6 +343,7 @@ int main(int argc, char **argv)
     load_ladder(lpath);
     res = calloc((size_t)R * M, sizeof *res);
     colors = malloc((size_t)R * M * n);
+    colors0 = malloc((size_t)R * M * n);
 
     struct timespec t0, t1;
     clock_gettime(CLOCK_MONOTONIC, &t0);
@@ -367,5 +389,9 @@ int main(int argc, char **argv)
         printf("summary target %d: %d/%d systems\n", targets[k], hits[k], R);
     fprintf(stderr, "time %.3f s, %.3g trials/s (threads=%d)\n", sec, (double)R * M * n * sweeps_total / sec,
             nthreads);
+    if (init_path)
+        dump_colors(init_path, colors0);
+    if (final_path)
+        dump_colors(final_path, colors);
     return 0;
 }

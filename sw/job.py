@@ -117,3 +117,100 @@ def make_job(sa, graph, sched, K, P, seed, target, tmpdir, extra=()):
                      color_words(cols0, n))
     exp = expected_output(n, d, P, rows, reps, color_words(cols1, n))
     return inp, exp, reps
+
+
+# ---------------- レプリカ交換法（M5） ----------------
+# 入力: 見出し0 の [48] = 1（交換法）、見出し1 = 目標 | 周回数 << 16 | DMAX << 48。
+# ADJ・COL・種・C0 は焼きなましと同じ。続けて、レーンごとの交換用の種（K ビート）、
+# 温度ごとのしきい値（16 ビート: TH[k][0] | TH[k][1] << 32）、交換の表 SW（k = 0..14、D = 1..DMAX の順に
+# 1 ビート 2 つずつ。下位が先、奇数なら最後の上位は 0）。
+# 出力: 焼きなましと同じ形で、レプリカの語 A の [35:32] に最後の温度の番号。
+
+GOLDEN = 0x9E3779B97F4A7C15
+M64 = (1 << 64) - 1
+DMAX_HW = 512   # 回路の SW の表の 1 行の長さ
+
+
+def _sm64(state):
+    state = (state + GOLDEN) & M64
+    z = state
+    z = ((z ^ (z >> 30)) * 0xBF58476D1CE4E5B9) & M64
+    z = ((z ^ (z >> 27)) * 0x94D049BB133111EB) & M64
+    return state, z ^ (z >> 31)
+
+
+def exchange_seed(master, L):
+    """pt.c と同じ: 主種から始まる splitmix64 の列の、区間 2^31 + L の最初の 0 でない値。"""
+    st = (master + (((0x80000000 + L) << 32) * GOLDEN)) & M64
+    while True:
+        st, z = _sm64(st)
+        if z:
+            return z
+
+
+def read_ladder(path):
+    v = read_ints(path)
+    d, M, dmax = v[0], v[1], v[2]
+    th = [v[3 + k * (d + 1): 3 + (k + 1) * (d + 1)] for k in range(M)]
+    o = 3 + M * (d + 1)
+    sw = [v[o + k * dmax: o + (k + 1) * dmax] for k in range(M - 1)]
+    return d, M, dmax, th, sw
+
+
+def run_pt(pt, graph, ladder, R_sys, seed, target, sweeps, tmpdir, extra=()):
+    init = os.path.join(tmpdir, "init.txt")
+    final = os.path.join(tmpdir, "final.txt")
+    out = subprocess.run([pt, "-g", graph, "-l", ladder, "-w", str(sweeps), "-R", str(R_sys), "-S", str(seed),
+                          "-e", "1", "--lag", "1", "-t", str(target), "--init", init, "--final", final, *extra],
+                         check=True, capture_output=True, text=True).stdout
+    reps = []
+    for line in out.splitlines():
+        if line.startswith("#") or line.startswith("summary"):
+            continue
+        f = line.split()
+        reps.append(dict(p=int(f[0]), seed=int(f[1], 16), c0=int(f[2]), best=int(f[3]), best_t=int(f[4]),
+                         final=int(f[5]), hit_t=int(f[6]), tidx=int(f[7])))
+    return reps, [l.strip() for l in open(init)], [l.strip() for l in open(final)]
+
+
+def pt_engine_cycles(K, P=16):
+    """回路の交換の仕組みが 1 周回ぶんの判断にかかるクロック数（mc_core.v の状態の並びから）。"""
+    return K * (1 + 9 * (P // 2) + P + 1)
+
+
+def pt_engine_ok(n, K, P=16):
+    """交換の判断は、周回 s+1 の頂点 0 の窓の o = 4 から始まり、周回 s+1 の終わり（n·P クロック）までに終わる必要がある。"""
+    return pt_engine_cycles(K, P) + 4 + 8 < n * P
+
+
+def make_job_pt(pt, graph, ladder, K, P, seed, target, sweeps, tmpdir, extra=()):
+    n, d, adj = read_graph(graph)
+    ld, M, dmax, th, sw = read_ladder(ladder)
+    assert ld == d and M == P and dmax <= DMAX_HW
+    assert pt_engine_ok(n, K, P), f"n = {n} では K = {K} の交換の判断が 1 周回に収まらない"
+    assert sweeps * n < (1 << 32) - 1
+    reps, cols0, cols1 = run_pt(pt, graph, ladder, K, seed, target, sweeps, tmpdir, extra)
+    R = K * P
+    assert len(reps) == R
+    beats = [n | (d << 16) | (P << 24) | (1 << 48), target | (sweeps << 16) | (dmax << 48)]
+    for nb in adj:
+        w = 0
+        for i, u in enumerate(nb):
+            w |= u << (16 * i)
+        beats.append(w)
+    beats += color_beats(color_words(cols0, n), R)
+    beats += [r["seed"] for r in reps]
+    beats += [r["c0"] for r in reps]
+    beats += [exchange_seed(seed, L) for L in range(K)]
+    beats += [row[0] | (row[1] << 32) for row in th]
+    for row in sw:   # 1 行 512 個にそろえる（回路は番地 {k, (D−1)/2} で引く）
+        row = row + [0] * (DMAX_HW - len(row))
+        beats += [row[i] | (row[i + 1] << 32) for i in range(0, DMAX_HW, 2)]
+    WT = sweeps * n
+    exp = [n | (d << 16) | (P << 24) | (MAGIC << 48), (WT + 1) * P, WT | (K << 48)]
+    for r in reps:
+        exp.append(r["best"] | (r["final"] << 16) | (r["tidx"] << 32))
+        exp.append(NONE48 if r["best_t"] < 0 else r["best_t"])
+        exp.append(NONE48 if r["hit_t"] < 0 else r["hit_t"])
+    exp += color_beats(color_words(cols1, n), R)
+    return beats, exp, reps

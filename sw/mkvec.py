@@ -26,6 +26,14 @@ JOBS = [
 ]
 
 
+# 交換法のジョブ: (グラフ, (Tmin, Tmax), 周回数, 主種, 目標)。交換の判断が 1 周回に収まる K のときだけ入れる
+PT_JOBS = [
+    ("data/circ_n64_d4.adj",  (0.35, 1.0), 30, 11,   0),
+    ("data/rr_n64_d4_s1.adj", (0.3, 1.5),  40, 7,    106),
+    ("data/rr_n256_d4_s1.adj", (0.35, 1.0), 20, 2026, 430),
+]
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--K", type=int, default=1)
@@ -49,6 +57,24 @@ def main():
             imps = sum(r["best_t"] >= 0 for r in reps)
             print(f"{graph}: n={n} in {len(i)} beats, out {len(e)} beats, "
                   f"windows {e[2]}, improved {imps}/{len(reps)}, hit {hits}/{len(reps)}")
+        subprocess.run(["make", "-s", "-C", HERE, "pt"], check=True)
+        npt = 0
+        for graph, (Tmin, Tmax), sweeps, seed, target in PT_JOBS:
+            n, d, _ = job.read_graph(os.path.join(ROOT, graph))
+            if not job.pt_engine_ok(n, a.K, a.P):
+                continue
+            lad = os.path.join(tmp, "l.ladder")
+            subprocess.run([sys.executable, os.path.join(HERE, "make_ladder.py"), str(d), "--Tmin", str(Tmin),
+                            "--Tmax", str(Tmax), "--M", str(a.P), "-o", lad], check=True, capture_output=True)
+            i, e, reps = job.make_job_pt(os.path.join(HERE, "pt"), os.path.join(ROOT, graph), lad, a.K, a.P,
+                                         seed, target, sweeps, tmp)
+            inp += [(w, k == len(i) - 1) for k, w in enumerate(i)]
+            exp += [(w, k == len(e) - 1) for k, w in enumerate(e)]
+            npt += 1
+            moved = sum(1 for r in reps if r["tidx"] != r["p"] % a.P)
+            print(f"PT {graph}: n={n} in {len(i)} beats, out {len(e)} beats, windows {sweeps * n}, "
+                  f"hit {sum(r['hit_t'] >= 0 for r in reps)}/{len(reps)}, temperature moved {moved}/{len(reps)}")
+    njobs = len(JOBS) + npt
     for name, beats in (("in.hex", inp), ("exp.hex", exp)):
         with open(os.path.join(outdir, name), "w") as f:
             for w, last in beats:
@@ -56,7 +82,7 @@ def main():
     with open(os.path.join(outdir, "params.vh"), "w") as f:
         kw = max(1, (a.K - 1).bit_length())
         f.write(f"`define K_LANES {a.K}\n`define KW_LANES {kw}\n`define NIN {len(inp)}\n`define NEXP {len(exp)}\n"
-                f"`define NJOBS {len(JOBS)}\n"
+                f"`define NJOBS {njobs}\n"
                 f"`define IN_HEX \"../vec_k{a.K}/in.hex\"\n`define EXP_HEX \"../vec_k{a.K}/exp.hex\"\n")
     print(f"→ {outdir}: {len(inp)} in, {len(exp)} out")
 
