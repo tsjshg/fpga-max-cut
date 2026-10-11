@@ -899,11 +899,36 @@
     (number of vertices) × 16 clocks no matter how many lanes there are (more lanes only add replicas), and the gap to
     the M4 shrinks to about 2×.
   </p>
+  <h3>Adding replica exchange to the circuit</h3>
+  <p>
+    As a next step beyond annealing, <b>replica exchange</b> (parallel tempering) was added to the circuit. The 16
+    replicas of a lane each run at a different temperature (16 steps from 0.35 to 1.0), and after every sweep
+    neighbouring temperatures are swapped with a probability that depends on the difference of their cuts. What is
+    swapped is the <b>temperature index</b>, not the colouring, so the circuit only needs a 4-bit index per replica
+    and a threshold table per temperature. A small engine in the circuit makes the swap decisions during the next
+    sweep, and they take effect from the sweep after that. The CPU version follows the same rule, bit for bit.
+  </p>
+  <div class="tbl-scroll">
+  <table>
+    <thead><tr><th>G50 target</th><th>FPGA, replica exchange (48 lanes)</th><th>FPGA, annealing (56 lanes)</th><th>M4, annealing</th></tr></thead>
+    <tbody>
+      <tr><td>5868</td><td>1.9 s</td><td>2.6 s</td><td>0.69 s</td></tr>
+      <tr><td>5872</td><td>3.8 s</td><td>8.1 s</td><td>2.0 s</td></tr>
+      <tr class="hit"><td>5876</td><td><strong>10.1 s</strong></td><td>67 s</td><td>16.3 s</td></tr>
+    </tbody>
+  </table>
+  </div>
+  <p>
+    It helps more the harder the target: on 5876 it is 6.7× faster than annealing on the same FPGA, and it also beats
+    annealing on the M4. That gain comes from the method, though. The CPU version of replica exchange is not optimized
+    yet, and an optimized one on the M4 would most likely win again (estimate). The exchange engine costs resources,
+    so the lanes went from 56 to 48.
+  </p>
   <p>Next steps:</p>
   <ul>
     <li><b>Energy per trial.</b> The board draws a few watts and the Mac mini a few tens of watts under load, so the
       comparison may come out differently there (not measured yet).</li>
-    <li>Replica exchange, which only needs the assignment of threshold tables to replicas to be swapped.</li>
+    <li>Optimize the CPU version of replica exchange with bit-slicing, and compare replica exchange against replica exchange.</li>
   </ul>
 </section>
 

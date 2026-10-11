@@ -11,7 +11,8 @@ for k in "$@"; do
   timing=out/mc${fclk}_k${k}_timing.txt
   rm -f $util $timing
   ~/claude/fpga-mac/vivado.sh build build.tcl all $fclk $k 8 > $log 2>&1
-  if [ -f $util ] && [ -f $timing ]; then
+  # 送り先に前のビルドの報告が残っていると、失敗しても持ち帰られる。成功は「### done」で見る
+  if grep -q "^### done" $log && [ -f $util ] && [ -f $timing ]; then
     wns=$(grep -A 6 "Design Timing Summary" $timing | tail -1 | awk '{print $1}')
     lut=$(grep -E "^\| Slice LUTs " $util | awk -F'|' '{print $3}' | tr -d ' ')
     lutm=$(grep -E "^\|   LUT as Memory " $util | awk -F'|' '{print $3}' | tr -d ' ')

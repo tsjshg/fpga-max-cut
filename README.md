@@ -39,6 +39,12 @@ Random 4-regular graph, n = 1024 (2048 edges), 1000 sweeps per run. All numbers 
   the length of one run decides it, and the FPGA is only about 2× slower than the M4. The FPGA's run
   time is n × 16 clocks per sweep and does not shrink with fewer replicas. Details in
   [`docs/m4.md`](docs/m4.md).
+- **Replica exchange (M5).** Each lane runs one replica-exchange system of 16 temperatures; an
+  exchange engine in the circuit decides swaps during the next sweep. It costs lanes (48 instead of
+  56) but pays off on hard targets: on G50 it reaches 5876 in 10.1 s instead of 67 s with annealing
+  on the same FPGA, which also beats annealing on the M4 (16.3 s). An optimized CPU version of
+  replica exchange is not written yet, so the M4 would likely win again. Details in
+  [`docs/m5.md`](docs/m5.md).
 - **Energy per trial has not been measured yet.** The board draws a few watts and the Mac mini a
   few tens of watts under load, so the comparison may come out differently there.
 
@@ -185,7 +191,7 @@ reference on the board takes about 50 s to produce the expected values for 896 r
 | — | optimized CPU version | done ([docs/cpu-fast.md](docs/cpu-fast.md)) |
 | M4 | time-to-target (TTS99) comparison; G-set G48–G50 | done ([docs/m4.md](docs/m4.md)) |
 | | energy per trial | waiting for a power meter |
-| M5 | replica exchange | later |
+| M5 | replica exchange, in the circuit | done ([docs/m5.md](docs/m5.md)) |
 
 ## License
 

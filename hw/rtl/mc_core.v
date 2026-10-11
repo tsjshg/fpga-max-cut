@@ -328,10 +328,6 @@ module mc_core #(
       swt_wa <= lcnt[11:0];
       swt_wd <= din;
     end
-    if (beat && lsec == L_EXS) begin
-      perm_mem[lcnt[KW-1:0]] <= IDENT;
-      exr_mem[lcnt[KW-1:0]]  <= din;
-    end
     if (!aresetn) begin
       e_state <= E_IDLE;
       e_overrun <= 1'b0;
@@ -385,15 +381,24 @@ module mc_core #(
           e_wb <= e_wb + 1;
           if (e_wb == P - 1) e_state <= E_SV;
         end
-        default: begin                 // E_SV
-          perm_mem[e_lane] <= e_perm;
-          exr_mem[e_lane]  <= e_rng;
+        default: begin                 // E_SV（perm_mem・exr_mem への書き込みは下の always）
           e_lane <= e_lane + 1;
           e_state <= (e_lane == K - 1) ? E_IDLE : E_LD;
         end
       endcase
     end
   end
+
+  // perm_mem・exr_mem の書き口は 1 つにまとめる（読み込みと交換の仕組みの 2 か所から書くと LUTRAM にならず、
+  // K = 56 で 7,000 個の FF と選択の論理に化けて LUT が足りなくなった）
+  wire          pe_ld = beat && (lsec == L_EXS);
+  wire          pe_we = pe_ld || (e_state == E_SV);
+  wire [KW-1:0] pe_wa = pe_ld ? lcnt[KW-1:0] : e_lane;
+  always @(posedge aclk)
+    if (pe_we) begin
+      perm_mem[pe_wa] <= pe_ld ? IDENT : e_perm;
+      exr_mem[pe_wa]  <= pe_ld ? din : e_rng;
+    end
 
   // ---------------- 本体 ----------------
   integer i, kk;
