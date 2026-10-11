@@ -42,9 +42,10 @@ Random 4-regular graph, n = 1024 (2048 edges), 1000 sweeps per run. All numbers 
 - **Replica exchange (M5).** Each lane runs one replica-exchange system of 16 temperatures; an
   exchange engine in the circuit decides swaps during the next sweep. It costs lanes (48 instead of
   56) but pays off on hard targets: on G50 it reaches 5876 in 10.1 s instead of 67 s with annealing
-  on the same FPGA, which also beats annealing on the M4 (16.3 s). An optimized CPU version of
-  replica exchange is not written yet, so the M4 would likely win again. Details in
-  [`docs/m5.md`](docs/m5.md).
+  on the same FPGA. With replica exchange optimized on the CPU as well (`sw/pt_fast.c`, bit-identical
+  to `sw/pt.c`, 2.87 × 10¹⁰ trials/s on the M4), the M4 takes 2.6 s, so replica exchange against
+  replica exchange the M4 is 2.9–3.9× faster, about the same gap as for annealing. The method helps
+  equally on both machines. Details in [`docs/m5.md`](docs/m5.md).
 - **Energy per trial has not been measured yet.** The board draws a few watts and the Mac mini a
   few tens of watts under load, so the comparison may come out differently there.
 
