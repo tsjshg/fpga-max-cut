@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """M5 の Mac 側: レプリカ交換法の到達の割合を大きな CPU の実行で数え、FPGA のジョブと期待値を作る。
 
-    python3 sw/m5_bench.py      → data/m5/{m5.json, jobs/<名前>/{in,exp}.bin}
+    python3 sw/m5_bench.py      → data/m5/{m5.json, jobs_k48/<名前>/{in,exp}.bin}
 
 系（16 レプリカ）のどれかが目標に届いた割合 P をアルゴリズムの性質として 256 系で数える。
 FPGA（K = 48）の 48 系は、その先頭と同じもの（ビット単位で同じ探索。ここで確かめる）。
@@ -32,7 +32,7 @@ TAUS = [3000, 5000, 10000, 20000, 30000, 100000]
 
 
 def main():
-    os.makedirs(os.path.join(OUT, "jobs"), exist_ok=True)
+    os.makedirs(os.path.join(OUT, "jobs_k48"), exist_ok=True)
     subprocess.run(["make", "-s", "-C", HERE, "pt", "sa_fast"], check=True)
     g = os.path.join(ROOT, GRAPH)
     n, d, _ = job.read_graph(g)
