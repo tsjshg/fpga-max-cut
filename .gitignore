@@ -25,4 +25,5 @@ hw/logs/
 data/gset/
 data/m4/
 sw/pt
+sw/pt_fast
 data/m5/
