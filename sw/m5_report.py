@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
-"""M5 の集計: G50 で、FPGA のレプリカ交換法（K = 48）と、焼きなまし（FPGA K = 56・M4）の TTS99 を比べる。
+"""M5 の集計: G50 で、FPGA のレプリカ交換法（K = 48）と、焼きなまし（FPGA K = 56・M4）・M4 の交換法の TTS99 を比べる。
 
     python3 sw/m5_report.py
 
 到達の割合はアルゴリズムの性質として大きな CPU の実行で数えたもの（交換法 256 系、焼きなまし 10,240 レプリカ）。
-時間は各機械で測ったもの（FPGA は DMA 込み、M4 は 1,280 レプリカの sa_fast）。TTS の式は m4_report.py と同じ。
+時間は各機械で測ったもの（FPGA は DMA 込み、M4 は 1,280 レプリカの sa_fast と、80 系 = 1,280 レプリカの pt_fast
+（data/m5/m4pt_r80.txt、m5_m4pt.py））。TTS の式は m4_report.py と同じ。
 """
 import json
 import math
@@ -29,14 +30,16 @@ def main():
     for line in open(os.path.join(ROOT, "data/m4/m4_r1280.txt")):
         f = line.split()
         m4t[f"{f[0]}_t{f[1]}"] = float(f[2])
+    m4pt = {int(l.split()[0]): float(l.split()[1]) for l in open(os.path.join(ROOT, "data/m5/m4pt_r80.txt"))}
     rows = []
     for target in (5868, 5872, 5876):
         # 交換法（FPGA・48 系）
-        pt = []
+        pt, mpt = [], []
         for r in sorted(m5["pt"], key=lambda r: r["tau"]):
             P = sum(r["sys_hit"][str(target)]) / r["systems"]
             t = fpt[r["name"]]["wall"]
             pt.append((tts(t, P, 48), r["tau"], P))
+            mpt.append((tts(m4pt[r["tau"]], P, 80), r["tau"], P))
         # 焼きなまし（FPGA 896 レプリカ・M4 1,280 レプリカ）
         fs, ms = [], []
         for r in m4:
@@ -51,12 +54,18 @@ def main():
                 continue
             fs.append((tts(fsa[key]["wall"], p, 896), r["tau"], p))
             ms.append((tts(m4t[key], p, 1280), r["tau"], p))
-        rows.append((target, min(pt), min(fs), min(ms)))
+        rows.append((target, min(pt), min(fs), min(ms), min(mpt)))
     print("| 目標 | FPGA 交換法（K = 48） | FPGA 焼きなまし（K = 56） | M4 焼きなまし（10 コア） | 交換法 / 焼きなまし（FPGA） | FPGA 交換法 / M4 焼きなまし |")
     print("|---:|---:|---:|---:|---:|---:|")
-    for target, a, b, c in rows:
+    for target, a, b, c, _ in rows:
         print(f"| {target} | {a[0]:.2f} s（τ={a[1]:,}） | {b[0]:.2f} s（τ={b[1]:,}） | {c[0]:.2f} s（τ={c[1]:,}） | "
               f"{b[0] / a[0]:.1f} 倍速い | {a[0] / c[0]:.2f} |")
+    print()
+    print("| 目標 | FPGA 交換法（K = 48、768 レプリカ） | M4 交換法（pt_fast・10 コア、1,280 レプリカ） | FPGA / M4 | M4 交換法 / M4 焼きなまし |")
+    print("|---:|---:|---:|---:|---:|")
+    for target, a, _, c, e in rows:
+        print(f"| {target} | {a[0]:.2f} s（τ={a[1]:,}） | {e[0]:.2f} s（τ={e[1]:,}） | {a[0] / e[0]:.2f} | "
+              f"{c[0] / e[0]:.1f} 倍速い |")
 
 
 if __name__ == "__main__":
