@@ -5,10 +5,14 @@
  * --order rand・--rng sm64 は無い（sa_fast と同じ）。-j は受け付けるが使わない。
  *
  *   -e a|b       エンジン（sa_gpu.metal の頭の説明）。既定は b
- *   --tg 数      1 threadgroup のスレッド数（a は 32 の倍数。既定 a: threadgroup メモリに収まる最大、b: 64）
+ *   --tg 数      1 threadgroup のスレッド数（a は 32 の倍数で threadgroup メモリに収まる数）。既定 a: 64、b: 32
+ *                （小さいほうがレプリカが少なくても多くのコアに散らばる。大きい R では 32〜256 で差は 1 割以内）
  *   --chunk 数   1 回の dispatch で回す周回数の上限（既定: スレッドあたり約 2^20 頂点ぶん）
  *   --pf 0|1     エンジン a の先読み（隣の番号を 2 頂点先、語を 1 頂点先に読む）。既定は R ≤ 2048 のとき 1
  *                （レプリカが少ないと 1 本の SIMD グループの待ちが隠せないので効く。多いと命令が増えるぶん遅い）
+ *   --amem tg|dev エンジン a の語の置き場。tg: threadgroup メモリ（1 SIMD グループ 4n バイト）、dev: device メモリのまま
+ *                （キャッシュ任せ）。既定は threadgroup メモリ（32 KB）に SIMD グループが 4 本以上載る（n ≤ 2048）なら tg。
+ *                n が大きいと tg では 1 コアに載る SIMD グループが少なすぎ、待ちが隠せない
  *   --gl 数      エンジン b の差 g の持ち方。2..16（既定 4）: 下の GL 桁だけビットスライスで持ち、上の桁は
  *                レプリカごとに device メモリ（sa_fast の bsasg と同じ）。0: 全部の桁をビットスライスで持つ
  *
@@ -214,7 +218,7 @@ static void usage(void)
 {
     fprintf(stderr,
             "使い方: sa_gpu -g graph.adj -s sched.sched [-R レプリカ数] [-S 主種] [-t 目標]...\n"
-            "          [-e a|b] [--tg スレッド数] [--chunk 周回数] [--pf 0|1] [--gl 桁数]\n"
+            "          [-e a|b] [--tg スレッド数] [--chunk 周回数] [--pf 0|1] [--amem tg|dev] [--gl 桁数]\n"
             "          [--init 初期の塗り分けの書き出し先] [--final 最後の塗り分けの書き出し先] [-q]\n");
     exit(2);
 }
@@ -255,7 +259,7 @@ int main(int argc, char **argv)
 {
     @autoreleasepool {
         const char *gpath = NULL, *spath = NULL, *init_path = NULL, *final_path = NULL;
-        int quiet = 0, eng = 'b', tg = 0, GL = 4, pf = -1;
+        int quiet = 0, eng = 'b', tg = 0, GL = 4, pf = -1, adev = -1;
         long chunk = 0;
         R = 16;
         for (int i = 1; i < argc; i++) {
@@ -297,6 +301,11 @@ int main(int argc, char **argv)
             } else if (!strcmp(a, "--chunk")) {
                 NEED();
                 chunk = atol(v);
+            } else if (!strcmp(a, "--amem")) {
+                NEED();
+                adev = !strcmp(v, "dev");
+                if (!adev && strcmp(v, "tg"))
+                    usage();
             } else if (!strcmp(a, "--pf")) {
                 NEED();
                 pf = atoi(v);
@@ -351,12 +360,16 @@ int main(int argc, char **argv)
         /* 組の大きさ: a は threadgroup（tg 本のスレッド = tg 個のレプリカ）、b は threadgroup（tg 本 × 32） */
         if (eng == 'a') {
             int maxsg = (int)(dev.maxThreadgroupMemoryLength / (4 * (NSUInteger)n));
+            if (adev < 0)
+                adev = maxsg < 4;
+            if (adev)
+                maxsg = 32; /* threadgroup メモリを使わない */
             if (maxsg < 1) {
-                fprintf(stderr, "n=%d は threadgroup メモリに収まらない\n", n);
+                fprintf(stderr, "n=%d は threadgroup メモリに収まらない（--amem dev を使う）\n", n);
                 return 1;
             }
             if (!tg)
-                tg = 32 * (maxsg < 8 ? maxsg : 8);
+                tg = 32 * (maxsg < 2 ? maxsg : 2);
             if (tg % 32 || tg / 32 > maxsg) {
                 fprintf(stderr, "--tg は 32 の倍数で %d 以下\n", 32 * maxsg);
                 return 1;
@@ -364,7 +377,7 @@ int main(int argc, char **argv)
             RP = (R + tg - 1) / tg * tg;
         } else {
             if (!tg)
-                tg = 64;
+                tg = 32;
             RP = (R + 32 * tg - 1) / (32 * tg) * (32 * tg);
         }
         int nth = eng == 'a' ? RP : RP / 32;
@@ -375,8 +388,8 @@ int main(int argc, char **argv)
 
         /* カーネルのコンパイル */
         NSString *defs = [NSString stringWithFormat:@"#define D %d\n#define N %d\n#define K %d\n#define NB %d\n"
-                                                    @"#define NT %d\n#define GL %d\n#define GW %d\n#define APF %d\n",
-                                                    d, n, K, NB, ntargets, GL, GW, pf];
+                                                    @"#define NT %d\n#define GL %d\n#define GW %d\n#define APF %d\n#define ADEV %d\n",
+                                                    d, n, K, NB, ntargets, GL, GW, pf, adev > 0];
         const char *extra = getenv("SA_GPU_DEFS"); /* 速さの切り分け用（例: "#define NO_RNG 1"）。結果は正しくなくなる */
         if (extra)
             defs = [defs stringByAppendingFormat:@"%s\n", extra];
@@ -542,7 +555,7 @@ int main(int argc, char **argv)
         memcpy(b_seg.contents, segs, sizeof(uint32_t) * 2 * nseg);
 
         /* 実行。dispatch ごとに command buffer を分け、全部送ってから最後を待つ */
-        NSUInteger tgmem = eng == 'a' ? (NSUInteger)(tg / 32) * n * 4 : 0;
+        NSUInteger tgmem = eng == 'a' && !adev ? (NSUInteger)(tg / 32) * n * 4 : 0;
         NSMutableArray *cbs = [NSMutableArray array];
         double t0 = now();
         uint64_t tbase = 0;

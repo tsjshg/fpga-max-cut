@@ -29,6 +29,9 @@ struct Params {
     uint pad;
 };
 
+#ifndef ADEV
+#define ADEV 0
+#endif
 #define TB(P) (((ulong)(P).tb_hi << 32) | (ulong)(P).tb_lo)
 
 /* ================= エンジン a ================= */
@@ -50,11 +53,15 @@ kernel void sa_a(device uint *col [[buffer(0)]],
                  uint lane [[thread_index_in_simdgroup]],
                  uint sg [[simdgroup_index_in_threadgroup]])
 {
-    threadgroup uint *w = tgm + sg * N;
     device uint *cg = col + (gid / 32) * N;
+#if ADEV
+    device uint *w = cg; /* 語を device メモリのまま使う（キャッシュ任せ） */
+#else
+    threadgroup uint *w = tgm + sg * N;
     for (uint v = lane; v < N; v += 32)
         w[v] = cg[v];
     simdgroup_barrier(mem_flags::mem_threadgroup);
+#endif
 
 #if APF
     /* 先読み: 頂点 v を処理するとき、v+1 の語（自分と隣）と v+2 の隣の番号はもう読んである。
@@ -175,9 +182,11 @@ kernel void sa_a(device uint *col [[buffer(0)]],
 #endif
     xs[gid] = uint2(lo, hi);
     st[gid] = int4(c, best, nxt, 0);
+#if !ADEV
     simdgroup_barrier(mem_flags::mem_threadgroup);
     for (uint v = lane; v < N; v += 32)
         cg[v] = w[v];
+#endif
 }
 
 /* カット値を数える（最初と最後）。cnt[p] */
