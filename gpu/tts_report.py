@@ -75,6 +75,8 @@ def main():
     est = {(e["name"], e["target"], e["tau"], e["engine"]): e for e in gpu["est"]}
     for m in gpu["meas"]:
         e = est[(m["name"], m["target"], m["tau"], m["engine"])]
+        if e["R"] != m["R"]:  # ほかの目標のために走らせた実行（同じグラフ・τ）
+            continue
         print(f"| {m['name']} | {m['target']} | {m['tau']:,} | {m['p']:.4f} | {m['engine']} | {m['R']:,} | {fmt(m['t'])} | "
               f"{fmt(m['tts'])} | {fmt(e['tts_est'])} |")
 
