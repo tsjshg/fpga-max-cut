@@ -27,3 +27,7 @@ data/m4/
 sw/pt
 sw/pt_fast
 data/m5/
+# GPU 版（gpu/Makefile が作る）と測定結果
+gpu/sa_gpu
+gpu/sa_gpu_metal.h
+data/gpu/
