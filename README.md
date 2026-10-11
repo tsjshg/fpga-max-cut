@@ -46,6 +46,12 @@ Random 4-regular graph, n = 1024 (2048 edges), 1000 sweeps per run. All numbers 
   to `sw/pt.c`, 2.87 × 10¹⁰ trials/s on the M4), the M4 takes 2.6 s, so replica exchange against
   replica exchange the M4 is 2.9–3.9× faster, about the same gap as for annealing. The method helps
   equally on both machines. Details in [`docs/m5.md`](docs/m5.md).
+- **Bonus: the M4's GPU (Metal).** A GPU version bit-identical to `sw/sa.c` lives in `gpu/`. The
+  bit-sliced engine reaches 9.6 × 10¹⁰ trials/s (3.2× the M4 CPU, 14× the FPGA), but only with tens
+  of thousands to a million replicas. The targets here need between a few and 2,048 replicas, and at
+  that count each replica is slow on the GPU (about 100 ns per vertex vs 48 ns on the M4 CPU), so in
+  time to target the GPU is 1.6–2.6× slower than the M4 CPU (3.7 s for G50 at 5872). Details in
+  [`docs/gpu.md`](docs/gpu.md).
 - **Energy per trial has not been measured yet.** The board draws a few watts and the Mac mini a
   few tens of watts under load, so the comparison may come out differently there.
 
